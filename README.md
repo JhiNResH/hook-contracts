@@ -25,3 +25,11 @@
 
 1. Inherit `BaseACPHook` and override only the callbacks you need.
 2. See [CONTRIBUTING.md](./CONTRIBUTING.md) for full guidelines.
+
+## Contributing
+
+Contributions, feedback, and discussion are welcome - please see [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines on how to get started.
+
+## License
+
+MIT
