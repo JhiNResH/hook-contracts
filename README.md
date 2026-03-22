@@ -21,6 +21,25 @@
 | [BiddingHook.sol](./contracts/hooks/BiddingHook.sol) | A — Simple Policy | Off-chain signed bidding for provider selection. Providers sign bid commitments; the hook verifies the winning signature on-chain via `setProvider`. Zero direct external calls — everything flows through core → hook callbacks. |
 | [FundTransferHook.sol](./contracts/hooks/FundTransferHook.sol) | B — Advanced Escrow | Two-phase fund transfer for token conversion/bridging jobs. Client capital flows to provider at `fund`; provider deposits output tokens at `submit`; buyer receives them at `complete`. |
 
+## Trust Extension Contracts
+
+Contributed by [Maiat Protocol](https://github.com/JhiNResH/maiat-protocol) — trust infrastructure for agent commerce.
+
+| Contract | Description |
+|----------|-------------|
+| **[EvaluatorRegistry.sol](./contracts/EvaluatorRegistry.sol)** | Trust-ranked evaluator discovery. Multiple evaluators per domain with on-chain performance tracking (success rate, total jobs). Paginated queries sorted by performance. Auto-delists underperforming evaluators. |
+| **[TrustGateACPHook.sol](./contracts/hooks/TrustGateACPHook.sol)** | Gates job lifecycle by trust score from an external oracle. Dynamic value-tier thresholds — higher value jobs require higher trust. |
+| **[TrustBasedEvaluator.sol](./contracts/hooks/TrustBasedEvaluator.sol)** | Reference evaluator that auto-approves/rejects based on provider trust score. Feeds outcomes back to EvaluatorRegistry for performance tracking. |
+
+**Documentation:** [04-evaluator-patterns.md](./04-evaluator-patterns.md) — Four evaluator design patterns including trust-ranked discovery.
+
+```
+Registry.getEvaluator("trust")  →  Best evaluator for domain
+TrustGateACPHook                →  Pre-screens participants by trust
+TrustBasedEvaluator             →  Auto-evaluates deliverables
+Registry.recordOutcome()        →  Feeds back performance data
+```
+
 ## Building a Hook
 
 1. Inherit `BaseACPHook` and override only the callbacks you need.
