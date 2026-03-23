@@ -1,0 +1,169 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ─── Maiat Design System (matching app.maiat.io) ─── */
+:root {
+  --bg-color: #FDFDFB;
+  --bg-page: #FDFDFB;
+  --bg-surface: #FDFDFB;
+  --bg-elevated: #f5f5f0;
+  --text-color: #000000;
+  --text-primary: #000000;
+  --text-secondary: #6b7280;
+  --text-muted: #9ca3af;
+  --border-default: rgba(0, 0, 0, 0.08);
+  --border-subtle: rgba(0, 0, 0, 0.05);
+  --glass-bg: rgba(255, 255, 255, 0.7);
+  --glass-border: rgba(0, 0, 0, 0.08);
+  --glass-shadow: 0 20px 50px rgba(0, 0, 0, 0.05), 0 2px 4px rgba(0, 0, 0, 0.02);
+  --atmosphere-gradient-1: rgba(16, 185, 129, 0.08);
+  --atmosphere-gradient-2: rgba(59, 130, 246, 0.08);
+  --atmosphere-opacity: 0.6;
+  --primary-gold: #D4A853;
+  --primary-gold-light: #E8C875;
+  --accent-blue: #3b82f6;
+  --success-emerald: #10b981;
+  --danger-crimson: #ef4444;
+  --warning-amber: #f59e0b;
+  --card-bg: rgba(255, 255, 255, 0.8);
+  --card-border: rgba(0, 0, 0, 0.06);
+  --slider-track: rgba(0, 0, 0, 0.1);
+  --slider-thumb: #D4A853;
+  --tab-active: #000000;
+  --tab-inactive: #9ca3af;
+}
+
+.dark {
+  --bg-color: #0A0A0A;
+  --bg-page: #0A0A0A;
+  --bg-surface: #0A0A0A;
+  --bg-elevated: #111111;
+  --text-color: #ffffff;
+  --text-primary: #ffffff;
+  --text-secondary: #9ca3af;
+  --text-muted: #6b7280;
+  --border-default: rgba(255, 255, 255, 0.08);
+  --border-subtle: rgba(255, 255, 255, 0.05);
+  --glass-bg: rgba(20, 20, 20, 0.4);
+  --glass-border: rgba(255, 255, 255, 0.08);
+  --glass-shadow: inset 0 0 30px rgba(255, 255, 255, 0.02), 0 30px 100px rgba(0, 0, 0, 0.3);
+  --atmosphere-gradient-1: rgba(16, 185, 129, 0.1);
+  --atmosphere-gradient-2: rgba(59, 130, 246, 0.1);
+  --atmosphere-opacity: 0.4;
+  --card-bg: rgba(255, 255, 255, 0.02);
+  --card-border: rgba(255, 255, 255, 0.06);
+  --slider-track: rgba(255, 255, 255, 0.1);
+  --slider-thumb: #E8C875;
+  --tab-active: #ffffff;
+  --tab-inactive: #6b7280;
+}
+
+body {
+  margin: 0;
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+  background: var(--bg-color);
+  color: var(--text-color);
+  transition: background 0.3s ease, color 0.3s ease;
+  -webkit-font-smoothing: antialiased;
+}
+
+.atmosphere {
+  position: fixed;
+  inset: 0;
+  z-index: -2;
+  background:
+    radial-gradient(circle at 50% 30%, var(--atmosphere-gradient-1) 0%, transparent 60%),
+    radial-gradient(circle at 10% 80%, var(--atmosphere-gradient-2) 0%, transparent 50%);
+  filter: blur(80px);
+  opacity: var(--atmosphere-opacity);
+  pointer-events: none;
+  transition: opacity 0.5s ease;
+}
+
+.liquid-glass {
+  background: var(--glass-bg);
+  backdrop-filter: blur(60px) saturate(180%);
+  border: 1px solid var(--glass-border);
+  box-shadow: var(--glass-shadow);
+  transition: background 0.3s ease, border 0.3s ease, box-shadow 0.3s ease;
+}
+
+.card {
+  background: var(--card-bg);
+  border: 1px solid var(--card-border);
+  border-radius: 12px;
+  transition: all 0.3s ease;
+}
+
+.card:hover {
+  border-color: var(--primary-gold);
+  box-shadow: 0 0 20px rgba(212, 168, 83, 0.1);
+}
+
+/* Slider styling */
+input[type="range"] {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 100%;
+  height: 4px;
+  background: var(--slider-track);
+  border-radius: 2px;
+  outline: none;
+}
+
+input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: var(--slider-thumb);
+  cursor: pointer;
+  box-shadow: 0 2px 8px rgba(212, 168, 83, 0.3);
+  transition: transform 0.15s ease;
+}
+
+input[type="range"]::-webkit-slider-thumb:hover {
+  transform: scale(1.2);
+}
+
+input[type="range"]::-moz-range-thumb {
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: var(--slider-thumb);
+  cursor: pointer;
+  border: none;
+  box-shadow: 0 2px 8px rgba(212, 168, 83, 0.3);
+}
+
+/* Pipeline animation */
+@keyframes hookReveal {
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.hook-card-animate {
+  animation: hookReveal 0.4s ease-out forwards;
+  opacity: 0;
+}
+
+/* Glow effects */
+.glow-green { box-shadow: 0 0 30px rgba(16, 185, 129, 0.15), 0 0 60px rgba(16, 185, 129, 0.05); }
+.glow-red { box-shadow: 0 0 30px rgba(239, 68, 68, 0.15), 0 0 60px rgba(239, 68, 68, 0.05); }
+.glow-amber { box-shadow: 0 0 30px rgba(245, 158, 11, 0.15), 0 0 60px rgba(245, 158, 11, 0.05); }
+.glow-gold { box-shadow: 0 0 20px rgba(212, 168, 83, 0.1); }
+
+/* Connector line between hooks */
+.pipeline-connector {
+  width: 2px;
+  height: 24px;
+  margin: 0 auto;
+  background: linear-gradient(to bottom, var(--border-default), transparent);
+}
+
+/* Scrollbar */
+::-webkit-scrollbar { width: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--border-default); border-radius: 3px; }
