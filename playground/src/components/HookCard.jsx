@@ -1,9 +1,9 @@
 import React from 'react';
 
 const STATUS_CONFIG = {
-  pass: { icon: '✅', label: 'PASS', color: 'text-emerald-500', border: 'border-emerald-500/20', bg: 'bg-emerald-500/5' },
-  blocked: { icon: '❌', label: 'BLOCKED', color: 'text-red-500', border: 'border-red-500/20', bg: 'bg-red-500/5' },
-  warn: { icon: '⚠️', label: 'ESCROW / ESCALATE', color: 'text-amber-500', border: 'border-amber-500/20', bg: 'bg-amber-500/5' },
+  pass: { label: 'PASS', dot: '#10b981' },
+  blocked: { label: 'BLOCKED', dot: '#ef4444' },
+  warn: { label: 'ESCROW', dot: '#f59e0b' },
 };
 
 export default function HookCard({ step, index, animate }) {
@@ -11,36 +11,54 @@ export default function HookCard({ step, index, animate }) {
 
   return (
     <div
-      className={`card p-5 ${animate ? 'hook-card-animate' : ''}`}
-      style={animate ? { animationDelay: `${index * 400}ms` } : {}}
+      className={`rounded-xl p-5 transition-all ${animate ? 'hook-animate' : ''}`}
+      style={{
+        animationDelay: animate ? `${index * 350}ms` : undefined,
+        background: 'var(--card-bg)',
+        border: '1px solid var(--border-color)',
+      }}
     >
+      {/* Header row */}
       <div className="flex items-center justify-between mb-3">
         <div className="flex items-center gap-3">
-          <span className="text-lg">{cfg.icon}</span>
-          <h3 className="font-mono font-semibold text-sm" style={{ color: 'var(--text-primary)' }}>
+          <div className="w-2 h-2 rounded-full" style={{ background: cfg.dot }} />
+          <span className="text-xs font-bold uppercase tracking-[0.08em]" style={{ color: 'var(--text-color)' }}>
             {step.name}
-          </h3>
+          </span>
         </div>
-        <span className={`text-xs font-bold px-2.5 py-1 rounded-full ${cfg.color} ${cfg.bg} ${cfg.border} border`}>
+        <span
+          className="text-[9px] font-bold uppercase tracking-[0.1em] px-2.5 py-1 rounded-full"
+          style={{
+            color: cfg.dot,
+            background: `${cfg.dot}10`,
+            border: `1px solid ${cfg.dot}25`,
+          }}
+        >
           {cfg.label}
         </span>
       </div>
 
-      <p className="text-xs mb-3" style={{ color: 'var(--text-muted)' }}>
+      {/* Description */}
+      <p className="text-[11px] mb-4" style={{ color: 'var(--text-muted)' }}>
         {step.description}
       </p>
 
-      <div className="grid grid-cols-2 gap-2 mb-3">
+      {/* Data grid */}
+      <div className="grid grid-cols-2 gap-x-6 gap-y-1.5 mb-4">
         {Object.entries(step.data).map(([key, val]) => (
-          <div key={key} className="text-xs">
-            <span style={{ color: 'var(--text-muted)' }}>{key}: </span>
-            <span className="font-mono font-medium" style={{ color: 'var(--text-secondary)' }}>{val}</span>
+          <div key={key} className="flex justify-between text-[11px]">
+            <span style={{ color: 'var(--text-muted)' }}>{key}</span>
+            <span className="font-mono font-medium" style={{ color: 'var(--text-color)' }}>{val}</span>
           </div>
         ))}
       </div>
 
-      <div className={`text-xs p-2.5 rounded-lg ${cfg.bg} border ${cfg.border}`}>
-        <span className={cfg.color}>{step.reason}</span>
+      {/* Reason */}
+      <div
+        className="text-[11px] px-3 py-2 rounded-lg"
+        style={{ background: 'var(--hover-bg)', color: 'var(--text-secondary)' }}
+      >
+        {step.reason}
       </div>
     </div>
   );

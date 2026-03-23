@@ -2,44 +2,31 @@ import React, { useState } from 'react';
 import PipelineSimulator from './PipelineSimulator.jsx';
 import ParameterPanel from './ParameterPanel.jsx';
 
-const DEFAULT_PARAMS_A = { trustThreshold: 50, autoApproveThreshold: 70, escrowThreshold: 30, quorumSize: 3 };
-const DEFAULT_PARAMS_B = { trustThreshold: 30, autoApproveThreshold: 50, escrowThreshold: 15, quorumSize: 2 };
-
 export default function CompareMode() {
-  const [paramsA, setParamsA] = useState(DEFAULT_PARAMS_A);
-  const [paramsB, setParamsB] = useState(DEFAULT_PARAMS_B);
+  const [paramsA, setParamsA] = useState({ trustThreshold: 50, autoApproveThreshold: 70, escrowThreshold: 30, quorumSize: 3 });
+  const [paramsB, setParamsB] = useState({ trustThreshold: 30, autoApproveThreshold: 50, escrowThreshold: 15, quorumSize: 2 });
 
   return (
     <div>
-      <div className="card p-4 mb-6 text-center">
-        <h3 className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>
-          ⚖️ Compare Mode
-        </h3>
-        <p className="text-xs mt-1" style={{ color: 'var(--text-muted)' }}>
-          Same agent, different parameters — see how configuration changes affect outcomes
+      <div className="rounded-xl p-4 mb-6 text-center" style={{ background: 'var(--card-bg)', border: '1px solid var(--border-color)' }}>
+        <p className="text-xs" style={{ color: 'var(--text-secondary)' }}>
+          Same agent, different parameters — see how configuration changes affect outcomes.
         </p>
       </div>
 
       <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
-        {/* Config A */}
         <div>
-          <div className="text-xs font-bold mb-3 text-center px-3 py-1.5 rounded-full bg-blue-500/10 text-blue-500 border border-blue-500/20 inline-block">
-            Configuration A (Default)
+          <div className="text-[10px] font-bold uppercase tracking-[0.15em] mb-3 text-center" style={{ color: 'var(--text-color)' }}>
+            Configuration A <span style={{ color: 'var(--text-muted)' }}>· Default</span>
           </div>
-          <div className="mb-4">
-            <ParameterPanel params={paramsA} onChange={setParamsA} />
-          </div>
+          <div className="mb-4"><ParameterPanel params={paramsA} onChange={setParamsA} /></div>
           <PipelineSimulator params={paramsA} onParamsChange={setParamsA} compare={true} />
         </div>
-
-        {/* Config B */}
         <div>
-          <div className="text-xs font-bold mb-3 text-center px-3 py-1.5 rounded-full bg-purple-500/10 text-purple-500 border border-purple-500/20 inline-block">
-            Configuration B (Relaxed)
+          <div className="text-[10px] font-bold uppercase tracking-[0.15em] mb-3 text-center" style={{ color: 'var(--text-color)' }}>
+            Configuration B <span style={{ color: 'var(--text-muted)' }}>· Relaxed</span>
           </div>
-          <div className="mb-4">
-            <ParameterPanel params={paramsB} onChange={setParamsB} />
-          </div>
+          <div className="mb-4"><ParameterPanel params={paramsB} onChange={setParamsB} /></div>
           <PipelineSimulator params={paramsB} onParamsChange={setParamsB} compare={true} />
         </div>
       </div>
