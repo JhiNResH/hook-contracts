@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.26;
+pragma solidity ^0.8.20;
 
 import "forge-std/Test.sol";
 import "../contracts/hooks/MutualAttestationHook.sol";
@@ -16,8 +16,40 @@ contract MockEAS {
     }
 }
 
-/// @notice Mock ACP contract
-contract MockACP {}
+/// @notice Mock ACP contract with getJob support
+contract MockACP {
+    struct Job {
+        uint256 id;
+        address client;
+        address provider;
+        address evaluator;
+        address hook;
+        string description;
+        uint256 budget;
+        uint256 expiredAt;
+        uint8 status;
+    }
+
+    mapping(uint256 => Job) public jobs;
+
+    function setJob(uint256 jobId, address client, address provider) external {
+        jobs[jobId] = Job({
+            id: jobId,
+            client: client,
+            provider: provider,
+            evaluator: address(0),
+            hook: address(0),
+            description: "",
+            budget: 0,
+            expiredAt: 0,
+            status: 0
+        });
+    }
+
+    function getJob(uint256 jobId) external view returns (Job memory) {
+        return jobs[jobId];
+    }
+}
 
 contract MutualAttestationHookTest is Test {
     MutualAttestationHook public hook;
@@ -26,7 +58,8 @@ contract MutualAttestationHookTest is Test {
 
     address client = address(0xC1C1);
     address provider = address(0xD1D1);
-    bytes32 jobId = bytes32(uint256(1));
+    address attacker = address(0xBAD);
+    uint256 jobId = 1;
     bytes32 schemaUID = bytes32(uint256(0xDEAD));
 
     function setUp() public {
@@ -39,42 +72,79 @@ contract MutualAttestationHookTest is Test {
             7 days
         );
 
-        // Simulate job completion by calling _postComplete via afterAction
-        // We need to set jobCompletedAt directly since we can't call through ACP
-        // Use vm.store to set the mapping
+        // Set up job with real participants
+        mockACP.setJob(jobId, client, provider);
+
+        // Simulate job completion via afterAction from ACP
         _simulateJobCompletion(jobId);
     }
 
-    function _simulateJobCompletion(bytes32 _jobId) internal {
-        // jobCompletedAt is at storage slot 1
-        vm.store(
-            address(hook),
-            keccak256(abi.encode(_jobId, uint256(1))),
-            bytes32(block.timestamp)
-        );
+    function _simulateJobCompletion(uint256 _jobId) internal {
+        // Call afterAction as ACP contract to trigger _postComplete
+        bytes4 completeSelector = bytes4(keccak256("complete(uint256,bytes32,bytes)"));
+        bytes memory data = abi.encode(bytes32(0), bytes(""));
+        vm.prank(address(mockACP));
+        hook.afterAction(_jobId, completeSelector, data);
     }
 
-    // ─── Basic Review Flow ───────────────────────────────────────
+    function _simulateJobRejection(uint256 _jobId) internal {
+        bytes4 rejectSelector = bytes4(keccak256("reject(uint256,bytes32,bytes)"));
+        bytes memory data = abi.encode(bytes32(0), bytes(""));
+        vm.prank(address(mockACP));
+        hook.afterAction(_jobId, rejectSelector, data);
+    }
+
+    // === CRITICAL FIX: Access Control ===
+
+    function test_revertIfNotClient() public {
+        vm.prank(attacker);
+        vm.expectRevert(MutualAttestationHook.MutualAttestationHook__NotJobParticipant.selector);
+        hook.submitClientReview(jobId, 5, "Fake review");
+    }
+
+    function test_revertIfNotProvider() public {
+        vm.prank(attacker);
+        vm.expectRevert(MutualAttestationHook.MutualAttestationHook__NotJobParticipant.selector);
+        hook.submitProviderReview(jobId, 4, "Fake review");
+    }
+
+    function test_revertIfProviderTriesToReviewAsClient() public {
+        vm.prank(provider);
+        vm.expectRevert(MutualAttestationHook.MutualAttestationHook__NotJobParticipant.selector);
+        hook.submitClientReview(jobId, 5, "Wrong role");
+    }
+
+    function test_revertIfClientTriesToReviewAsProvider() public {
+        vm.prank(client);
+        vm.expectRevert(MutualAttestationHook.MutualAttestationHook__NotJobParticipant.selector);
+        hook.submitProviderReview(jobId, 4, "Wrong role");
+    }
+
+    // === Basic Review Flow ===
 
     function test_clientCanReviewProvider() public {
-        hook.submitClientReview(jobId, client, provider, 5, "Great work!");
-        
+        vm.prank(client);
+        hook.submitClientReview(jobId, 5, "Great work!");
+
         assertTrue(hook.clientReviewed(jobId));
         assertFalse(hook.providerReviewed(jobId));
         assertEq(mockEAS.attestCount(), 1);
     }
 
     function test_providerCanReviewClient() public {
-        hook.submitProviderReview(jobId, provider, client, 4, "Clear specs, paid fast");
-        
+        vm.prank(provider);
+        hook.submitProviderReview(jobId, 4, "Clear specs, paid fast");
+
         assertFalse(hook.clientReviewed(jobId));
         assertTrue(hook.providerReviewed(jobId));
         assertEq(mockEAS.attestCount(), 1);
     }
 
     function test_mutualReviewComplete() public {
-        hook.submitClientReview(jobId, client, provider, 5, "Excellent");
-        hook.submitProviderReview(jobId, provider, client, 4, "Good client");
+        vm.prank(client);
+        hook.submitClientReview(jobId, 5, "Excellent");
+        vm.prank(provider);
+        hook.submitProviderReview(jobId, 4, "Good client");
 
         assertTrue(hook.clientReviewed(jobId));
         assertTrue(hook.providerReviewed(jobId));
@@ -82,100 +152,134 @@ contract MutualAttestationHookTest is Test {
         assertEq(mockEAS.attestCount(), 2);
     }
 
-    // ─── Score Validation ────────────────────────────────────────
+    // === Score Validation ===
 
     function test_revertOnScoreTooLow() public {
-        vm.expectRevert(MutualAttestationHook.InvalidScore.selector);
-        hook.submitClientReview(jobId, client, provider, 0, "Bad");
+        vm.prank(client);
+        vm.expectRevert(MutualAttestationHook.MutualAttestationHook__InvalidScore.selector);
+        hook.submitClientReview(jobId, 0, "Bad");
     }
 
     function test_revertOnScoreTooHigh() public {
-        vm.expectRevert(MutualAttestationHook.InvalidScore.selector);
-        hook.submitClientReview(jobId, client, provider, 6, "Too high");
+        vm.prank(client);
+        vm.expectRevert(MutualAttestationHook.MutualAttestationHook__InvalidScore.selector);
+        hook.submitClientReview(jobId, 6, "Too high");
     }
 
     function test_validScoreRange() public {
         for (uint8 score = 1; score <= 5; score++) {
-            bytes32 jid = bytes32(uint256(100 + score));
+            uint256 jid = 100 + score;
+            mockACP.setJob(jid, client, provider);
             _simulateJobCompletion(jid);
-            hook.submitClientReview(jid, client, provider, score, "OK");
+
+            vm.prank(client);
+            hook.submitClientReview(jid, score, "OK");
         }
         assertEq(mockEAS.attestCount(), 5);
     }
 
-    // ─── Double Review Prevention ────────────────────────────────
+    // === Double Review Prevention ===
 
     function test_revertOnDoubleClientReview() public {
-        hook.submitClientReview(jobId, client, provider, 5, "First");
-        
-        vm.expectRevert(MutualAttestationHook.AlreadyReviewed.selector);
-        hook.submitClientReview(jobId, client, provider, 3, "Second");
+        vm.prank(client);
+        hook.submitClientReview(jobId, 5, "First");
+
+        vm.prank(client);
+        vm.expectRevert(MutualAttestationHook.MutualAttestationHook__AlreadyReviewed.selector);
+        hook.submitClientReview(jobId, 3, "Second");
     }
 
     function test_revertOnDoubleProviderReview() public {
-        hook.submitProviderReview(jobId, provider, client, 4, "First");
-        
-        vm.expectRevert(MutualAttestationHook.AlreadyReviewed.selector);
-        hook.submitProviderReview(jobId, provider, client, 2, "Second");
+        vm.prank(provider);
+        hook.submitProviderReview(jobId, 4, "First");
+
+        vm.prank(provider);
+        vm.expectRevert(MutualAttestationHook.MutualAttestationHook__AlreadyReviewed.selector);
+        hook.submitProviderReview(jobId, 2, "Second");
     }
 
-    // ─── Review Window ───────────────────────────────────────────
+    // === Review Window ===
 
     function test_revertAfterReviewWindowExpires() public {
         vm.warp(block.timestamp + 8 days);
-        
-        vm.expectRevert(MutualAttestationHook.ReviewWindowExpired.selector);
-        hook.submitClientReview(jobId, client, provider, 5, "Too late");
+
+        vm.prank(client);
+        vm.expectRevert(MutualAttestationHook.MutualAttestationHook__ReviewWindowExpired.selector);
+        hook.submitClientReview(jobId, 5, "Too late");
     }
 
     function test_reviewWithinWindow() public {
         vm.warp(block.timestamp + 6 days);
-        hook.submitClientReview(jobId, client, provider, 5, "Just in time");
+        vm.prank(client);
+        hook.submitClientReview(jobId, 5, "Just in time");
         assertEq(mockEAS.attestCount(), 1);
     }
 
-    // ─── Job Not Completed ───────────────────────────────────────
+    // === Job Not Completed ===
 
     function test_revertIfJobNotCompleted() public {
-        bytes32 unknownJob = bytes32(uint256(999));
-        
-        vm.expectRevert(MutualAttestationHook.JobNotCompleted.selector);
-        hook.submitClientReview(unknownJob, client, provider, 5, "No job");
+        uint256 unknownJob = 999;
+        mockACP.setJob(unknownJob, client, provider);
+        // Don't call _simulateJobCompletion
+
+        vm.prank(client);
+        vm.expectRevert(MutualAttestationHook.MutualAttestationHook__JobNotCompleted.selector);
+        hook.submitClientReview(unknownJob, 5, "No job");
     }
 
-    // ─── Review Status ───────────────────────────────────────────
+    // === Rejected Jobs CAN Be Reviewed (LOW fix) ===
+
+    function test_rejectedJobCanBeReviewed() public {
+        uint256 rejectedJob = 50;
+        mockACP.setJob(rejectedJob, client, provider);
+        _simulateJobRejection(rejectedJob);
+
+        vm.prank(client);
+        hook.submitClientReview(rejectedJob, 2, "Provider ghosted");
+        assertEq(mockEAS.attestCount(), 1);
+
+        vm.prank(provider);
+        hook.submitProviderReview(rejectedJob, 1, "Vague specs");
+        assertEq(mockEAS.attestCount(), 2);
+        assertTrue(hook.isFullyReviewed(rejectedJob));
+    }
+
+    // === Review Status ===
 
     function test_getReviewStatus() public {
         (bool clientDone, bool providerDone, uint256 deadline) = hook.getReviewStatus(jobId);
-        
+
         assertFalse(clientDone);
         assertFalse(providerDone);
         assertGt(deadline, block.timestamp);
     }
 
     function test_getReviewStatusAfterBothReviews() public {
-        hook.submitClientReview(jobId, client, provider, 5, "Great");
-        hook.submitProviderReview(jobId, provider, client, 4, "Good");
+        vm.prank(client);
+        hook.submitClientReview(jobId, 5, "Great");
+        vm.prank(provider);
+        hook.submitProviderReview(jobId, 4, "Good");
 
         (bool clientDone, bool providerDone,) = hook.getReviewStatus(jobId);
         assertTrue(clientDone);
         assertTrue(providerDone);
     }
 
-    // ─── EAS Attestation Data ────────────────────────────────────
+    // === EAS Attestation Data ===
 
     function test_attestationContainsCorrectData() public {
-        hook.submitClientReview(jobId, client, provider, 5, "Excellent work");
+        vm.prank(client);
+        hook.submitClientReview(jobId, 5, "Excellent work");
 
         bytes memory attestData = mockEAS.attestData(1);
         (
-            bytes32 decodedJobId,
+            uint256 decodedJobId,
             address reviewer,
             address reviewee,
             uint8 score,
             string memory comment,
             bool isClientReview
-        ) = abi.decode(attestData, (bytes32, address, address, uint8, string, bool));
+        ) = abi.decode(attestData, (uint256, address, address, uint8, string, bool));
 
         assertEq(decodedJobId, jobId);
         assertEq(reviewer, client);
@@ -186,53 +290,62 @@ contract MutualAttestationHookTest is Test {
     }
 
     function test_providerAttestationData() public {
-        hook.submitProviderReview(jobId, provider, client, 3, "Vague specs");
+        vm.prank(provider);
+        hook.submitProviderReview(jobId, 3, "Vague specs");
 
         bytes memory attestData = mockEAS.attestData(1);
-        (,,, uint8 score, string memory comment, bool isClientReview) = 
-            abi.decode(attestData, (bytes32, address, address, uint8, string, bool));
+        (,,, uint8 score, string memory comment, bool isClientReview) =
+            abi.decode(attestData, (uint256, address, address, uint8, string, bool));
 
         assertEq(score, 3);
         assertEq(comment, "Vague specs");
         assertFalse(isClientReview);
     }
 
-    // ─── Events ──────────────────────────────────────────────────
+    // === Events ===
 
     function test_emitsReviewSubmitted() public {
+        vm.prank(client);
         vm.expectEmit(true, true, true, false);
         emit MutualAttestationHook.ReviewSubmitted(
             jobId, client, provider, 5, bytes32(uint256(1)), true
         );
-        hook.submitClientReview(jobId, client, provider, 5, "Nice");
+        hook.submitClientReview(jobId, 5, "Nice");
     }
 
     function test_emitsMutualReviewComplete() public {
-        hook.submitClientReview(jobId, client, provider, 5, "Good");
-        
+        vm.prank(client);
+        hook.submitClientReview(jobId, 5, "Good");
+
+        vm.prank(provider);
         vm.expectEmit(true, false, false, false);
         emit MutualAttestationHook.MutualReviewComplete(jobId);
-        hook.submitProviderReview(jobId, provider, client, 4, "Good");
+        hook.submitProviderReview(jobId, 4, "Good");
     }
 
-    // ─── Attestation UIDs ────────────────────────────────────────
+    // === Attestation UIDs ===
 
     function test_storesAttestationUIDs() public {
-        hook.submitClientReview(jobId, client, provider, 5, "Great");
-        hook.submitProviderReview(jobId, provider, client, 4, "Good");
+        vm.prank(client);
+        hook.submitClientReview(jobId, 5, "Great");
+        vm.prank(provider);
+        hook.submitProviderReview(jobId, 4, "Good");
 
         assertEq(hook.clientAttestationUID(jobId), bytes32(uint256(1)));
         assertEq(hook.providerAttestationUID(jobId), bytes32(uint256(2)));
     }
 
-    // ─── Multiple Jobs ───────────────────────────────────────────
+    // === Multiple Jobs ===
 
     function test_multipleJobsIndependent() public {
-        bytes32 job2 = bytes32(uint256(2));
+        uint256 job2 = 2;
+        mockACP.setJob(job2, client, provider);
         _simulateJobCompletion(job2);
 
-        hook.submitClientReview(jobId, client, provider, 5, "Job 1");
-        hook.submitClientReview(job2, client, provider, 3, "Job 2");
+        vm.prank(client);
+        hook.submitClientReview(jobId, 5, "Job 1");
+        vm.prank(client);
+        hook.submitClientReview(job2, 3, "Job 2");
 
         assertTrue(hook.clientReviewed(jobId));
         assertTrue(hook.clientReviewed(job2));
@@ -240,17 +353,53 @@ contract MutualAttestationHookTest is Test {
         assertFalse(hook.providerReviewed(job2));
     }
 
-    // ─── Fuzz Tests ──────────────────────────────────────────────
+    // === Job Participants Stored Correctly ===
+
+    function test_jobParticipantsStoredOnComplete() public {
+        assertEq(hook.jobClient(jobId), client);
+        assertEq(hook.jobProvider(jobId), provider);
+    }
+
+    // === Fuzz Tests ===
 
     function testFuzz_validScores(uint8 score) public {
         vm.assume(score >= 1 && score <= 5);
-        hook.submitClientReview(jobId, client, provider, score, "Fuzz");
+        vm.prank(client);
+        hook.submitClientReview(jobId, score, "Fuzz");
         assertEq(mockEAS.attestCount(), 1);
     }
 
     function testFuzz_invalidScores(uint8 score) public {
         vm.assume(score == 0 || score > 5);
-        vm.expectRevert(MutualAttestationHook.InvalidScore.selector);
-        hook.submitClientReview(jobId, client, provider, score, "Bad");
+        vm.prank(client);
+        vm.expectRevert(MutualAttestationHook.MutualAttestationHook__InvalidScore.selector);
+        hook.submitClientReview(jobId, score, "Bad");
+    }
+
+    function testFuzz_onlyParticipantsCanReview(address caller) public {
+        vm.assume(caller != client && caller != address(0));
+        vm.prank(caller);
+        vm.expectRevert(MutualAttestationHook.MutualAttestationHook__NotJobParticipant.selector);
+        hook.submitClientReview(jobId, 5, "Unauthorized");
+    }
+
+    // === Immutable reviewWindow ===
+
+    function test_reviewWindowIsImmutable() public view {
+        assertEq(hook.reviewWindow(), 7 days);
+    }
+
+    function test_defaultReviewWindow() public {
+        MutualAttestationHook hook2 = new MutualAttestationHook(
+            address(mockACP), address(mockEAS), schemaUID, 0
+        );
+        assertEq(hook2.reviewWindow(), 7 days);
+    }
+
+    function test_customReviewWindow() public {
+        MutualAttestationHook hook3 = new MutualAttestationHook(
+            address(mockACP), address(mockEAS), schemaUID, 3 days
+        );
+        assertEq(hook3.reviewWindow(), 3 days);
     }
 }
