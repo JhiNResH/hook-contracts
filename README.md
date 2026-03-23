@@ -28,7 +28,7 @@ forge script script/DeployToBase.s.sol --rpc-url $BASE_RPC --broadcast -vvvv
 
 ## The Problem: Synthesis Is Living It Right Now
 
-The Synthesis hackathon is the first major event judged by AI agents. Every participant registered on Maiat's [ERC-8004 Identity Registry](https://basescan.org/address/0x8004A169FB4a3325136EB29fA0ceB6D2e539a432) — 35,000+ agent identities on Base.
+The Synthesis hackathon is the first major event judged by AI agents. Maiat has indexed 35,000+ agent identities on Base via the [ERC-8004 Identity Registry](https://basescan.org/address/0x8004A169FB4a3325136EB29fA0ceB6D2e539a432), with [passport.maiat.io](https://passport.maiat.io) providing verifiable on-chain identity through ENS + ERC-8004 + ENSIP-25.
 
 In ERC-8183 terms:
 - **Clients** = 569 published projects requesting evaluation
@@ -124,7 +124,7 @@ TrustBasedEvaluator          — Auto-approve/reject based on trust score
 | Contract | Description |
 |----------|-------------|
 | [EvaluatorRegistry.sol](./contracts/EvaluatorRegistry.sol) | Trust-ranked evaluator discovery. Multiple evaluators per domain with on-chain performance tracking. Auto-delists underperformers. |
-| [ITrustOracle.sol](./contracts/interfaces/ITrustOracle.sol) | Standard interface for trust score queries. **ABI-aligned with live [MaiatOracle](https://basescan.org/address/0xc6cf2d59ff2e4ee64bbfceaad8dcb9aa3f13c6da) on Base mainnet** (18,600+ agent scores). |
+| [ITrustOracle.sol](./contracts/interfaces/ITrustOracle.sol) | Standard interface for trust score queries. **ABI-aligned with live [MaiatOracle](https://basescan.org/address/0xc6cf2d59ff2e4ee64bbfceaad8dcb9aa3f13c6da) on Base mainnet** (35,245 agents indexed). |
 
 ### ERC-8183 Official (4 contracts)
 
@@ -179,12 +179,12 @@ See [AUDIT-PR6.md](./AUDIT-PR6.md) for the full report.
 
 ## Why Maiat8183
 
-1. **We build on ERC-8004** — the identity standard this hackathon uses for all 35K+ registrations
+1. **We build on ERC-8004** — the agent identity standard, with [passport.maiat.io](https://passport.maiat.io) combining ENS + ERC-8004 + ENSIP-25 for verifiable on-chain identity
 2. **We contributed to ERC-8183** — 5 PRs including a [security fix](https://github.com/erc-8183/hook-contracts/pull/12) on the official repo
 3. **We solve the cold start problem** — bootstrapping trust from zero for agents with no history
 4. **We score both sides** — clients AND providers get trust-gated through the same hooks (Airbnb model)
 5. **Every judgment is verifiable** — EAS attestations = no "the judges were biased" drama
-6. **Connected to real data** — ITrustOracle aligned with [MaiatOracle](https://basescan.org/address/0xc6cf2d59ff2e4ee64bbfceaad8dcb9aa3f13c6da) (18,600+ agent scores on Base)
+6. **Connected to real data** — ITrustOracle aligned with [MaiatOracle](https://basescan.org/address/0xc6cf2d59ff2e4ee64bbfceaad8dcb9aa3f13c6da) (35,245 agents indexed, 993 queries on Base)
 
 ---
 
@@ -204,10 +204,10 @@ See [AUDIT-PR6.md](./AUDIT-PR6.md) for the full report.
 
 The hooks read trust scores from MaiatOracle on Base. That oracle is fed by **Maiat Protocol** — the off-chain trust engine:
 
-- **18,600+ agents** indexed with ML-scored trust ratings
+- **35,245+ agents** indexed with ML-scored trust ratings
 - **Wadjet ML Engine** — XGBoost V2, 98% accuracy on rug/scam detection
 - **5 ACP offerings** — agent_trust, token_check, token_forensics, trust_swap, agent_reputation
-- **854+ query logs** — real API usage
+- **993+ query logs** — real API usage
 - **7 npm packages** — SDK for ElizaOS, GAME, AgentKit, MCP, and more
 
 [app.maiat.io](https://app.maiat.io) | [GitHub](https://github.com/JhiNResH/maiat-protocol) | [Guard SDK](https://github.com/JhiNResH/maiat-guard)
