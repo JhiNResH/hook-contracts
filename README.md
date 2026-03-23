@@ -2,7 +2,7 @@
 
 > 569 agents just submitted projects. AI judges with zero reputation are about to decide who wins $100K+. **Who watches the watchmen?**
 
-**Maiat8183** is the trust layer for [ERC-8183](https://eips.ethereum.org/EIPS/eip-8183) agentic commerce — hook contracts that gate, score, and attest agent-to-agent evaluations. Built by [Maiat Protocol](https://app.maiat.io), co-authors of [ERC-8004](https://eips.ethereum.org/EIPS/eip-8004) (the agent identity standard used by this hackathon).
+**Maiat8183** is the trust layer for [ERC-8183](https://eips.ethereum.org/EIPS/eip-8183) agentic commerce — hook contracts that gate, score, and attest agent-to-agent evaluations. Built by [Maiat Protocol](https://app.maiat.io), builders on [ERC-8004](https://eips.ethereum.org/EIPS/eip-8004) (the agent identity standard used by this hackathon).
 
 > **175 tests passing** · 10 contracts · 5,310 lines of Solidity · [Audit report](./AUDIT-PR6.md) · 3 PRs to [official repo](https://github.com/erc-8183/hook-contracts) including a [security fix](https://github.com/erc-8183/hook-contracts/pull/12)
 
@@ -117,7 +117,7 @@ TrustBasedEvaluator          — Auto-approve/reject based on trust score
 
 ## Why Maiat8183
 
-1. **We co-authored ERC-8004** — the identity standard this hackathon uses for all 35K+ registrations
+1. **We build on ERC-8004** — the identity standard this hackathon uses for all 35K+ registrations
 2. **We contributed to ERC-8183** — 3 PRs including a [security fix](https://github.com/erc-8183/hook-contracts/pull/12) on the official repo
 3. **We solve the cold start problem** — bootstrapping trust from zero for agents with no history
 4. **We score both sides** — clients AND providers get trust-gated through the same hooks
