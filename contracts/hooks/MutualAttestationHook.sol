@@ -39,13 +39,49 @@ interface IEAS {
     function attest(AttestationRequest calldata request) external payable returns (bytes32);
 }
 
-/// @title MutualAttestationHook
-/// @notice Airbnb-style mutual reviews -- both client and provider attest each other after job completion.
-/// @dev Creates two EAS attestations per completed job: one from each party.
-///      Bad clients who post vague specs get low scores from providers.
-///      Bad providers who deliver garbage get low scores from clients.
-///      Both sides build reputation. Both sides are accountable.
-/// @custom:security-contact security@maiat.xyz
+/**
+ * @title MutualAttestationHook
+ * @notice Airbnb-style bilateral review system — both client and provider
+ *         attest each other on EAS after job completion, building two-sided
+ *         on-chain reputation.
+ *
+ * USE CASE
+ * --------
+ * One-sided reviews create incentive problems: clients can post vague
+ * specs without accountability, and providers can deliver poor work while
+ * blaming the spec. MutualAttestationHook requires both parties to leave
+ * an EAS attestation within a configurable review window after a job
+ * completes. Clients rate provider quality; providers rate client
+ * behaviour. Both sides accumulate verifiable on-chain reputation scores
+ * that downstream trust systems (e.g. ERC-8004) can consume.
+ *
+ * FLOW (all interactions through core contract → hook callbacks)
+ * ----
+ *  1. createJob(provider, evaluator, expiredAt, description, hook=this)
+ *  2. fund(jobId, optParams) — job moves to Funded.
+ *  3. submit(jobId, deliverable, optParams) — job moves to Submitted.
+ *  4. complete(jobId, reason, optParams)
+ *     → _postComplete (via afterAction): record job participants
+ *       (client, provider) and completion timestamp for the review window.
+ *  5. Within reviewWindow (default 7 days):
+ *       a. Client calls submitClientReview(jobId, score, comment)
+ *          → validates score 1-5, window not expired, not already reviewed;
+ *            calls EAS.attest() with provider as recipient.
+ *       b. Provider calls submitProviderReview(jobId, score, comment)
+ *          → same validation; calls EAS.attest() with client as recipient.
+ *  6. reject(jobId, reason, optParams) [alternative to step 4]
+ *     → _postReject (via afterAction): same participant recording; reviews
+ *       may still be submitted to capture accountability on failed jobs.
+ *
+ * TRUST MODEL
+ * -----------
+ * Only job participants (client or provider recorded at completion) can
+ * submit reviews. Each party can review exactly once per job. Review
+ * submissions are only possible within the immutable reviewWindow. EAS
+ * attestations are non-revocable — reviews are permanent on-chain facts.
+ *
+ * @custom:security-contact security@maiat.io
+ */
 contract MutualAttestationHook is BaseACPHook, ReentrancyGuard {
     /// @notice EAS contract for attestations
     IEAS public immutable eas;
