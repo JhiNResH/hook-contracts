@@ -80,7 +80,7 @@ interface IEAS {
  * submissions are only possible within the immutable reviewWindow. EAS
  * attestations are non-revocable — reviews are permanent on-chain facts.
  *
- * @custom:security-contact security@maiat.io
+ * @custom:security-contact security@erc-8183.org
  */
 contract MutualAttestationHook is BaseACPHook, ReentrancyGuard {
     /// @notice EAS contract for attestations
