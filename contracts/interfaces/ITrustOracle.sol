@@ -2,15 +2,12 @@
 pragma solidity ^0.8.20;
 
 /// @title ITrustOracle
-/// @notice Minimal trust oracle interface for ERC-8183 trust-based hooks and evaluators.
-/// @dev Shared interface — do not duplicate in individual contracts.
+/// @notice Vendor-neutral trust oracle interface for ERC-8183 hooks and evaluators.
+/// @dev Any trust provider can implement this interface. See providers/ for
+///      reference implementations.
 interface ITrustOracle {
-    struct UserReputation {
-        uint256 reputationScore;
-        uint256 totalReviews;
-        bool initialized;
-        uint256 lastUpdated;
-    }
-
-    function getUserData(address user) external view returns (UserReputation memory);
+    /// @notice Get the trust score for a user.
+    /// @param user The address to query
+    /// @return score Trust score in range [0, 100]. Returns 0 for unknown users.
+    function getTrustScore(address user) external view returns (uint256 score);
 }

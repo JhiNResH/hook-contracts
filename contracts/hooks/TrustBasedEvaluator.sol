@@ -43,7 +43,6 @@ import {ITrustOracle} from "../interfaces/ITrustOracle.sol";
  * pattern with evaluated[jobId] guard). External calls to AgenticCommerce
  * and EvaluatorRegistry happen last, after all state changes.
  *
- * @custom:security-contact security@maiat.io
  */
 
 /// @notice Minimal AgenticCommerce interface for evaluation
@@ -190,9 +189,8 @@ contract TrustBasedEvaluator is OwnableUpgradeable, ReentrancyGuard {
         evaluated[jobId] = true;
         totalEvaluated++;
 
-        // Check provider trust
-        ITrustOracle.UserReputation memory rep = oracle.getUserData(job.provider);
-        uint256 score = rep.initialized ? rep.reputationScore : 0;
+        // Check provider trust via vendor-neutral ITrustOracle
+        uint256 score = oracle.getTrustScore(job.provider);
         // Sanity bound on oracle score
         if (score > MAX_TRUST_SCORE) score = MAX_TRUST_SCORE;
 

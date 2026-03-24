@@ -39,7 +39,6 @@ import {OwnableUpgradeable} from "@openzeppelin/contracts-upgradeable/access/Own
  * can call recordOutcome, preventing score manipulation. Delisting is
  * automatic and irreversible until the owner explicitly reactivates.
  *
- * @custom:security-contact security@maiat.io
  */
 contract EvaluatorRegistry is OwnableUpgradeable {
     /*//////////////////////////////////////////////////////////////

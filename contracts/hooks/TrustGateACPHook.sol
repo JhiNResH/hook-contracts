@@ -41,7 +41,6 @@ import {ITrustOracle} from "../interfaces/ITrustOracle.sol";
  * callbacks never revert so that legitimate state changes are never
  * blocked by hook side-effects.
  *
- * @custom:security-contact security@maiat.io
  */
 
 contract TrustGateACPHook is IACPHook, OwnableUpgradeable {
@@ -312,8 +311,7 @@ contract TrustGateACPHook is IACPHook, OwnableUpgradeable {
     }
 
     function _checkTrust(uint256 jobId, address agent, uint256 threshold) internal {
-        ITrustOracle.UserReputation memory rep = oracle.getUserData(agent);
-        uint256 score = rep.initialized ? rep.reputationScore : 0;
+        uint256 score = oracle.getTrustScore(agent);
         // Sanity bound
         if (score > MAX_TRUST_SCORE) score = MAX_TRUST_SCORE;
 
