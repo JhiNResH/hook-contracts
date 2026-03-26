@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.20;
 
-import "./IACPHook.sol";
+import "@acp/IACPHook.sol";
 import "@openzeppelin/contracts/utils/introspection/ERC165.sol";
 
 /**
