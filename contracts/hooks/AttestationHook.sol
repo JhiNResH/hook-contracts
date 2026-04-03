@@ -173,6 +173,7 @@ contract AttestationHook is BaseACPHook {
      */
     function _postComplete(
         uint256 jobId,
+        address, /* caller */
         bytes32 reason,
         bytes memory /* optParams */
     ) internal override {
@@ -190,6 +191,7 @@ contract AttestationHook is BaseACPHook {
      */
     function _postReject(
         uint256 jobId,
+        address, /* caller */
         bytes32 reason,
         bytes memory /* optParams */
     ) internal override {
@@ -335,8 +337,8 @@ contract AttestationHook is BaseACPHook {
     /**
      * @notice ERC-165 support
      */
-    function supportsInterface(bytes4 interfaceId) external pure returns (bool) {
+    function supportsInterface(bytes4 interfaceId) public view override returns (bool) {
         return interfaceId == type(IACPHook).interfaceId
-            || interfaceId == 0x01ffc9a7; // IERC165
+            || super.supportsInterface(interfaceId);
     }
 }
