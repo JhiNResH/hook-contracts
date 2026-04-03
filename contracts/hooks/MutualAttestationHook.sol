@@ -140,6 +140,7 @@ contract MutualAttestationHook is BaseACPHook, ReentrancyGuard {
     /// @notice Records job completion timestamp + participants when job completes
     function _postComplete(
         uint256 jobId,
+        address, /* caller */
         bytes32, /* reason */
         bytes memory /* optParams */
     ) internal virtual override {
@@ -153,6 +154,7 @@ contract MutualAttestationHook is BaseACPHook, ReentrancyGuard {
     /// @notice Records job rejection timestamp + participants so rejected jobs can also be reviewed
     function _postReject(
         uint256 jobId,
+        address, /* caller */
         bytes32, /* reason */
         bytes memory /* optParams */
     ) internal virtual override {
