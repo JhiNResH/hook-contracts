@@ -13,14 +13,17 @@ import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.s
 //////////////////////////////////////////////////////////////*/
 
 contract MockOracle is ITrustOracle {
-    mapping(address => UserReputation) public reps;
+    mapping(address => uint256) private _scores;
+    mapping(address => bool) private _initialized;
 
     function setRep(address user, uint256 score, bool initialized) external {
-        reps[user] = UserReputation(score, 0, 0, 0, initialized, block.timestamp);
+        _scores[user] = score;
+        _initialized[user] = initialized;
     }
 
-    function getUserData(address user) external view override returns (UserReputation memory) {
-        return reps[user];
+    function getTrustScore(address user) external view override returns (uint256 score) {
+        if (!_initialized[user]) return 0;
+        score = _scores[user];
     }
 }
 
@@ -264,7 +267,7 @@ contract TrustGateACPHookTest is Test {
     address public client = makeAddr("client");
     address public provider = makeAddr("provider");
 
-    bytes4 public constant FUND_SEL = bytes4(keccak256("fund(uint256,bytes)"));
+    bytes4 public constant FUND_SEL = bytes4(keccak256("fund(uint256,uint256,bytes)"));
     bytes4 public constant SUBMIT_SEL = bytes4(keccak256("submit(uint256,bytes32,bytes)"));
     bytes4 public constant COMPLETE_SEL = bytes4(keccak256("complete(uint256,bytes32,bytes)"));
 
@@ -279,6 +282,9 @@ contract TrustGateACPHookTest is Test {
         );
         ERC1967Proxy proxy = new ERC1967Proxy(address(impl), initData);
         hook = TrustGateACPHook(address(proxy));
+
+        // Seed job id=1 so beforeAction can look up client/provider via staticcall
+        ac.addJob(1, client, provider, address(0), 0);
     }
 
     // --- Constructor ---
@@ -301,7 +307,7 @@ contract TrustGateACPHookTest is Test {
     function test_beforeAction_revertNotAC() public {
         vm.prank(makeAddr("rando"));
         vm.expectRevert(TrustGateACPHook.TrustGateACPHook__OnlyAgenticCommerce.selector);
-        hook.beforeAction(1, FUND_SEL, abi.encode(client, bytes("")));
+        hook.beforeAction(1, FUND_SEL, bytes(""));
     }
 
     function test_afterAction_revertNotAC() public {
@@ -315,7 +321,7 @@ contract TrustGateACPHookTest is Test {
     function test_beforeAction_fund_passes() public {
         oracle.setRep(client, 80, true);
         vm.prank(address(ac));
-        hook.beforeAction(1, FUND_SEL, abi.encode(client, bytes("")));
+        hook.beforeAction(1, FUND_SEL, bytes(""));
         // No revert = pass
     }
 
@@ -323,20 +329,20 @@ contract TrustGateACPHookTest is Test {
         oracle.setRep(client, 30, true);
         vm.prank(address(ac));
         vm.expectRevert();
-        hook.beforeAction(1, FUND_SEL, abi.encode(client, bytes("")));
+        hook.beforeAction(1, FUND_SEL, bytes(""));
     }
 
     function test_beforeAction_submit_passes() public {
         oracle.setRep(provider, 80, true);
         vm.prank(address(ac));
-        hook.beforeAction(1, SUBMIT_SEL, abi.encode(provider, bytes32(0), bytes("")));
+        hook.beforeAction(1, SUBMIT_SEL, bytes(""));
     }
 
     function test_beforeAction_submit_reverts_lowTrust() public {
         oracle.setRep(provider, 40, true);
         vm.prank(address(ac));
         vm.expectRevert();
-        hook.beforeAction(1, SUBMIT_SEL, abi.encode(provider, bytes32(0), bytes("")));
+        hook.beforeAction(1, SUBMIT_SEL, bytes(""));
     }
 
     // --- afterAction ---

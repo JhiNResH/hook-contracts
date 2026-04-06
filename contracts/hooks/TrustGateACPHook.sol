@@ -7,21 +7,40 @@ import {ITrustOracle} from "../interfaces/ITrustOracle.sol";
 
 /**
  * @title TrustGateACPHook
- * @notice IACPHook implementation that gates job lifecycle based on trust scores.
- *         Demonstrates how hooks can enforce pre-conditions and record outcomes.
+ * @notice Gates job funding and submission behind configurable trust-score
+ *         thresholds, with value-tiered requirements for high-stakes jobs.
  *
- * @dev This is a REFERENCE IMPLEMENTATION for the ERC-8183 hook system.
+ * USE CASE
+ * --------
+ * A marketplace wants to ensure that only sufficiently-trusted participants
+ * can transact. Low-trust clients should not be able to fund jobs, and
+ * low-trust providers should not be able to submit deliverables. For
+ * high-value jobs the required trust score automatically increases, so the
+ * safety bar scales with financial risk.
  *
- * Hook points:
- *   - beforeAction(fund)    → Check client trust score (with job-value-aware threshold)
- *   - beforeAction(submit)  → Check provider trust score (with job-value-aware threshold)
- *   - afterAction(complete) → Record positive outcome event
- *   - afterAction(reject)   → Record negative outcome event
+ * FLOW (all interactions through core contract → hook callbacks)
+ * ----
+ *  1. createJob(provider, evaluator, expiredAt, description, hook=this)
+ *  2. fund(jobId, optParams)
+ *     → _preFund (via beforeAction): query oracle for client trust score,
+ *       compute value-aware threshold from _effectiveThreshold(), revert
+ *       with InsufficientTrust if score < threshold.
+ *  3. submit(jobId, deliverable, optParams)
+ *     → _preSubmit (via beforeAction): query oracle for provider trust
+ *       score, compute threshold, revert if score < threshold.
+ *  4. complete(jobId, reason, optParams)
+ *     → _postComplete (via afterAction): emit OutcomeRecorded(jobId, true).
+ *  5. reject(jobId, reason, optParams)
+ *     → _postReject (via afterAction): emit OutcomeRecorded(jobId, false).
  *
- * Revert in beforeAction to block the transition.
- * afterAction should NOT revert (would block legitimate state changes).
+ * TRUST MODEL
+ * -----------
+ * Trust scores are read from an immutable ITrustOracle reference set at
+ * initialisation. The owner can adjust baseline thresholds and per-value
+ * tiers at any time, but cannot retroactively alter scores. afterAction
+ * callbacks never revert so that legitimate state changes are never
+ * blocked by hook side-effects.
  *
- * @custom:security-contact security@maiat.io
  */
 
 contract TrustGateACPHook is IACPHook, OwnableUpgradeable {
@@ -32,6 +51,20 @@ contract TrustGateACPHook is IACPHook, OwnableUpgradeable {
     struct Tier {
         uint256 minValue;
         uint256 requiredScore;
+    }
+
+    /// @dev Local mirror of AgenticCommerceHooked.Job (fields up to budget).
+    ///      Must stay in sync with the canonical struct layout.
+    ///      Using a struct type in abi.decode correctly handles the outer ABI
+    ///      offset that Solidity adds when returning dynamic-field structs.
+    struct _ACJob {
+        uint256 id;
+        address client;
+        address provider;
+        address evaluator;
+        address hook;
+        string description;
+        uint256 budget;
     }
 
     /*//////////////////////////////////////////////////////////////
@@ -45,7 +78,7 @@ contract TrustGateACPHook is IACPHook, OwnableUpgradeable {
     uint256 public constant MAX_TRUST_SCORE = 100;
 
     /// @dev Well-known selectors from AgenticCommerce
-    bytes4 public constant FUND_SEL     = bytes4(keccak256("fund(uint256,bytes)"));
+    bytes4 public constant FUND_SEL     = bytes4(keccak256("fund(uint256,uint256,bytes)"));
     bytes4 public constant SUBMIT_SEL   = bytes4(keccak256("submit(uint256,bytes32,bytes)"));
     bytes4 public constant COMPLETE_SEL = bytes4(keccak256("complete(uint256,bytes32,bytes)"));
     bytes4 public constant REJECT_SEL   = bytes4(keccak256("reject(uint256,bytes32,bytes)"));
@@ -131,18 +164,27 @@ contract TrustGateACPHook is IACPHook, OwnableUpgradeable {
      * @notice Called before state transitions. Reverts to block.
      * @dev Only callable by AgenticCommerce.
      */
-    function beforeAction(uint256 jobId, bytes4 selector, bytes calldata data) external override {
+    function beforeAction(uint256 jobId, bytes4 selector, bytes calldata) external override {
         if (msg.sender != agenticCommerce) revert TrustGateACPHook__OnlyAgenticCommerce();
 
-        if (selector == FUND_SEL) {
-            (address caller,) = abi.decode(data, (address, bytes));
-            if (caller == address(0)) return; // Skip trust check for zero address
-            uint256 threshold = _effectiveThreshold(jobId, clientThreshold);
-            _checkTrust(jobId, caller, threshold);
-        } else if (selector == SUBMIT_SEL) {
-            (address caller,,) = abi.decode(data, (address, bytes32, bytes));
+        if (selector == FUND_SEL || selector == SUBMIT_SEL) {
+            // Read caller from authoritative job state — never trust user-controlled calldata.
+            // job.client is enforced by ACP for fund(); job.provider for submit().
+            (bool ok, bytes memory raw) = agenticCommerce.staticcall(
+                abi.encodeWithSignature("getJob(uint256)", jobId)
+            );
+            if (!ok || raw.length < 32) return;
+
+            // Decode as struct type so abi.decode handles the outer ABI offset
+            // that Solidity inserts when returning a dynamic-field struct from a function.
+            _ACJob memory job = abi.decode(raw, (_ACJob));
+
+            bool isFund = (selector == FUND_SEL);
+            address caller = isFund ? job.client : job.provider;
             if (caller == address(0)) return;
-            uint256 threshold = _effectiveThreshold(jobId, providerThreshold);
+
+            uint256 base = isFund ? clientThreshold : providerThreshold;
+            uint256 threshold = _effectiveThreshold(jobId, base);
             _checkTrust(jobId, caller, threshold);
         }
         // Other selectors: pass through
@@ -273,14 +315,10 @@ contract TrustGateACPHook is IACPHook, OwnableUpgradeable {
         );
         if (!success || data.length < 32) return baseThreshold;
 
-        // [HIGH-1 FIX] Use abi.decode for safe extraction of budget from Job struct
-        // Job struct: (uint256 id, address client, address provider, address evaluator,
-        //              address hook, string description, uint256 budget, uint256 expiredAt, uint8 status)
-        // abi.decode handles dynamic types (string) correctly, unlike raw assembly
-        (,,,,,, budget,,) = abi.decode(
-            data,
-            (uint256, address, address, address, address, string, uint256, uint256, uint8)
-        );
+        // Decode as struct type so abi.decode handles the outer ABI offset
+        // that Solidity inserts when returning a dynamic-field struct from a function.
+        _ACJob memory _job = abi.decode(data, (_ACJob));
+        budget = _job.budget;
 
         uint256 len = _tiers.length;
         uint256 result = baseThreshold;
@@ -293,8 +331,7 @@ contract TrustGateACPHook is IACPHook, OwnableUpgradeable {
     }
 
     function _checkTrust(uint256 jobId, address agent, uint256 threshold) internal {
-        ITrustOracle.UserReputation memory rep = oracle.getUserData(agent);
-        uint256 score = rep.initialized ? rep.reputationScore : 0;
+        uint256 score = oracle.getTrustScore(agent);
         // Sanity bound
         if (score > MAX_TRUST_SCORE) score = MAX_TRUST_SCORE;
 

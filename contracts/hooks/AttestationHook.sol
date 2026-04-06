@@ -5,33 +5,40 @@ import "../BaseACPHook.sol";
 
 /**
  * @title AttestationHook
- * @author Maiat Protocol (https://maiat.io)
- * @custom:security-contact security@maiat.io
- * @notice ERC-8183 hook that writes EAS attestations on job completion and rejection.
- *         Creates an immutable, on-chain receipt for every ACP transaction — enabling
- *         trust scores, reputation systems (e.g. ERC-8004), and agent credit histories.
+ * @notice Writes an immutable EAS attestation for every completed or rejected
+ *         ACP job, creating an on-chain receipt that feeds reputation systems.
  *
- * @dev Extends BaseACPHook. Only afterAction hooks are used (non-blocking).
- *      Attestations are written to the Ethereum Attestation Service (EAS).
+ * USE CASE
+ * --------
+ * Off-chain trust scores and reputation graphs (e.g. ERC-8004) need a
+ * verifiable, tamper-proof record of job outcomes. Without an attestation
+ * layer, any reputation system must trust a centralised data source.
+ * AttestationHook calls the Ethereum Attestation Service (EAS) after every
+ * job completion or rejection, storing jobId, client, provider, evaluator,
+ * budget, outcome reason, and a completed flag — permanently queryable by
+ * anyone on-chain.
  *
- * Flow:
- *   1. Job completes or is rejected via AgenticCommerceHooked
- *   2. afterAction callback fires (complete or reject)
- *   3. Hook reads job data from ACP contract
- *   4. Hook writes EAS attestation with structured receipt data
- *   5. Attestation is permanently on-chain, queryable by anyone
+ * FLOW (all interactions through core contract → hook callbacks)
+ * ----
+ *  1. createJob(provider, evaluator, expiredAt, description, hook=this)
+ *  2. fund(jobId, optParams) — job moves to Funded.
+ *  3. submit(jobId, deliverable, optParams) — job moves to Submitted.
+ *  4. complete(jobId, reason, optParams)
+ *     → _postComplete (via afterAction): read job data from ACP contract,
+ *       call EAS.attest() with completed=true. Uses try/catch so EAS
+ *       failures never revert the completion. Stores attestation UID.
+ *  5. reject(jobId, reason, optParams) [alternative to step 4]
+ *     → _postReject (via afterAction): same as above with completed=false.
  *
- * Schema (registered on EAS):
- *   "uint256 jobId, address client, address provider, address evaluator,
- *    uint256 budget, bytes32 reason, bool completed"
+ * TRUST MODEL
+ * -----------
+ * Attestations are non-revocable — job outcomes are facts. The hook never
+ * intercepts beforeAction, so it can never block a job lifecycle transition.
+ * Each jobId is attested exactly once (CEI sentinel guard). EAS contract
+ * and schema UID are owner-updatable in case of re-registration, but the
+ * already-written attestations on EAS are immutable.
  *
- * Design decisions:
- *   - Attestation is written to provider as recipient (they accumulate reputation)
- *   - Non-revocable (job outcomes are facts, not opinions)
- *   - afterAction only — never blocks job lifecycle (no beforeAction logic)
- *   - Uses try/catch so EAS failures never revert the job transaction
- *   - Idempotent: each jobId can only be attested once
- *   - Owner can update schema UID if re-registered
+ * @custom:security-contact security@erc-8183.org
  */
 
 /// @notice Minimal EAS interface (Base: 0x4200000000000000000000000000000000000021)

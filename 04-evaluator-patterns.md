@@ -126,7 +126,7 @@ For ecosystems with multiple evaluator providers, the on-chain registry enables 
 
 ```solidity
 // Register multiple evaluators for the same domain
-registry.register("trust", 0xMaiatEvaluator);
+registry.register("trust", 0xTrustEvaluator);
 registry.register("trust", 0xAltEvaluator);
 
 // Get the top-ranked active evaluator (backward-compatible)
@@ -173,7 +173,7 @@ ACP (Agent Commerce Protocol by Virtuals) has no built-in evaluator discovery me
 │  Layer 1: DISCOVERY (EvaluatorRegistry)                         │
 │  "Who is the best evaluator for this domain?"                   │
 │                                                                 │
-│  registry.getEvaluator("trust") → 0xMaiatEvaluator             │
+│  registry.getEvaluator("trust") → 0xTrustEvaluator             │
 │  ↑ Returns highest success-rate active evaluator                │
 └─────────────────────────┬───────────────────────────────────────┘
                           │ evaluator address
@@ -182,7 +182,7 @@ ACP (Agent Commerce Protocol by Virtuals) has no built-in evaluator discovery me
 │  Layer 2: GATING (TrustGateACPHook)                             │
 │  "Are this client and provider trustworthy enough?"             │
 │                                                                 │
-│  createJob(evaluator: 0xMaiat, hook: 0xTrustGate)              │
+│  createJob(evaluator: 0xEvaluator, hook: 0xTrustGate)              │
 │  → fund()   → hook checks client score (+ job value tier)      │
 │  → submit() → hook checks provider score (+ job value tier)    │
 └─────────────────────────┬───────────────────────────────────────┘

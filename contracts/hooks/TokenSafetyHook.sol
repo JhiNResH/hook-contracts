@@ -7,24 +7,40 @@ import {ITokenSafetyOracle} from "../interfaces/ITokenSafetyOracle.sol";
 
 /**
  * @title TokenSafetyHook
- * @notice IACPHook implementation that gates job funding based on payment token safety.
- *         Before a job is funded, checks that the payment token is not a honeypot,
- *         rug-pull, or high-tax token via an external token safety oracle.
+ * @notice Blocks job funding when the payment token is flagged as a
+ *         honeypot, high-tax, or otherwise unsafe by an external oracle.
  *
- * @dev This is a REFERENCE IMPLEMENTATION for the ERC-8183 hook system.
+ * USE CASE
+ * --------
+ * ACP jobs are funded with arbitrary ERC-20 tokens. A malicious client
+ * could fund a job with a honeypot token — one that can be sent but not
+ * transferred out — locking the provider's payout. TokenSafetyHook
+ * intercepts the fund() call, extracts the payment token address, queries
+ * a configurable ITokenSafetyOracle, and reverts if the verdict matches
+ * the blocked-verdicts bitmask (default: Honeypot, HighTax, Blocked).
+ * Whitelisted tokens (e.g. USDC, WETH) bypass the oracle check entirely.
  *
- * Hook points:
- *   - beforeAction(fund) → Extract payment token, query oracle, revert if unsafe
- *   - afterAction(*)     → No-op passthrough
+ * FLOW (all interactions through core contract → hook callbacks)
+ * ----
+ *  1. createJob(provider, evaluator, expiredAt, description, hook=this
+ *     or hook=CompositeRouterHook with TokenSafetyHook as a plugin)
+ *  2. fund(jobId, optParams)
+ *     → _preFund (via beforeAction): decode data to extract payment token
+ *       address. If whitelisted, pass through. Otherwise query
+ *       oracle.getTokenVerdict(token); if verdict is in blockedVerdictsMask
+ *       revert with UnsafeToken(token, verdict).
+ *  3. All other lifecycle calls (submit, complete, reject, …)
+ *     → beforeAction / afterAction: no-op passthrough.
  *
- * Revert in beforeAction to block the transition.
+ * TRUST MODEL
+ * -----------
+ * The oracle is an external contract whose address is owner-controlled.
+ * Whitelisted tokens are never sent to the oracle — the whitelist is the
+ * owner's override mechanism for known-safe tokens. The blocked-verdicts
+ * bitmask is also owner-configurable, letting operators tune risk
+ * tolerance (e.g. allow Unverified tokens in low-trust environments).
  *
- * Features:
- *   - Owner can whitelist tokens to bypass oracle checks
- *   - Owner can set risk tolerance (bitmask of which verdicts to block)
- *   - NOT upgradeable — deploy a new instance and swap via Router if logic changes
- *
- * @custom:security-contact security@maiat.io
+ * @custom:security-contact security@erc-8183.org
  */
 contract TokenSafetyHook is IACPHook, OwnableUpgradeable {
     /*//////////////////////////////////////////////////////////////
