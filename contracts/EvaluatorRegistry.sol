@@ -5,12 +5,40 @@ import {OwnableUpgradeable} from "@openzeppelin/contracts-upgradeable/access/Own
 
 /**
  * @title EvaluatorRegistry
- * @notice Trust-ranked evaluator discovery for ERC-8183 AgenticCommerce.
+ * @notice Trust-ranked evaluator discovery and performance tracking for
+ *         ERC-8183 AgenticCommerce — auto-delists underperforming evaluators.
  *
- * @dev Multi-evaluator system with on-chain performance tracking and
- *      trust-ranked discovery. Solves ACP's evaluator discovery gap.
+ * USE CASE
+ * --------
+ * ACP clients need to discover reliable evaluators for their job domains
+ * (e.g. "code-review", "content-moderation"). Without a registry, clients
+ * must know evaluator addresses in advance. This registry lets the owner
+ * register evaluators per domain, tracks approve/reject outcomes reported
+ * by authorised callers, ranks evaluators by success rate, and
+ * automatically delists any evaluator whose success rate falls below the
+ * configured threshold after enough jobs.
  *
- * @custom:security-contact security@maiat.io
+ * FLOW (all interactions through core contract → hook callbacks)
+ * ----
+ *  1. Owner calls register(domain, evaluatorAddress) to add an evaluator.
+ *  2. Client calls getEvaluator(domain) to discover the best active
+ *     evaluator for that domain (sorted by success rate).
+ *  3. After each job evaluation, the authorised evaluator contract calls
+ *     recordOutcome(evaluatorAddress, approved):
+ *       a. Increments totalJobs / totalApproved / totalRejected.
+ *       b. Recomputes successRateBP.
+ *       c. If rate < minSuccessRateBP after minJobsForThreshold jobs,
+ *          marks evaluator inactive and emits EvaluatorDelisted.
+ *  4. Owner can call reactivate(evaluator) after remediation, or
+ *     remove(domain, evaluator) to delist permanently.
+ *
+ * TRUST MODEL
+ * -----------
+ * Only the owner can register or remove evaluators. Only addresses
+ * explicitly authorised by the owner (e.g. TrustBasedEvaluator contracts)
+ * can call recordOutcome, preventing score manipulation. Delisting is
+ * automatic and irreversible until the owner explicitly reactivates.
+ *
  */
 contract EvaluatorRegistry is OwnableUpgradeable {
     /*//////////////////////////////////////////////////////////////

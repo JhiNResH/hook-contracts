@@ -7,21 +7,40 @@ import {ITrustOracle} from "../interfaces/ITrustOracle.sol";
 
 /**
  * @title TrustGateACPHook
- * @notice IACPHook implementation that gates job lifecycle based on trust scores.
- *         Demonstrates how hooks can enforce pre-conditions and record outcomes.
+ * @notice Gates job funding and submission behind configurable trust-score
+ *         thresholds, with value-tiered requirements for high-stakes jobs.
  *
- * @dev This is a REFERENCE IMPLEMENTATION for the ERC-8183 hook system.
+ * USE CASE
+ * --------
+ * A marketplace wants to ensure that only sufficiently-trusted participants
+ * can transact. Low-trust clients should not be able to fund jobs, and
+ * low-trust providers should not be able to submit deliverables. For
+ * high-value jobs the required trust score automatically increases, so the
+ * safety bar scales with financial risk.
  *
- * Hook points:
- *   - beforeAction(fund)    → Check client trust score (with job-value-aware threshold)
- *   - beforeAction(submit)  → Check provider trust score (with job-value-aware threshold)
- *   - afterAction(complete) → Record positive outcome event
- *   - afterAction(reject)   → Record negative outcome event
+ * FLOW (all interactions through core contract → hook callbacks)
+ * ----
+ *  1. createJob(provider, evaluator, expiredAt, description, hook=this)
+ *  2. fund(jobId, optParams)
+ *     → _preFund (via beforeAction): query oracle for client trust score,
+ *       compute value-aware threshold from _effectiveThreshold(), revert
+ *       with InsufficientTrust if score < threshold.
+ *  3. submit(jobId, deliverable, optParams)
+ *     → _preSubmit (via beforeAction): query oracle for provider trust
+ *       score, compute threshold, revert if score < threshold.
+ *  4. complete(jobId, reason, optParams)
+ *     → _postComplete (via afterAction): emit OutcomeRecorded(jobId, true).
+ *  5. reject(jobId, reason, optParams)
+ *     → _postReject (via afterAction): emit OutcomeRecorded(jobId, false).
  *
- * Revert in beforeAction to block the transition.
- * afterAction should NOT revert (would block legitimate state changes).
+ * TRUST MODEL
+ * -----------
+ * Trust scores are read from an immutable ITrustOracle reference set at
+ * initialisation. The owner can adjust baseline thresholds and per-value
+ * tiers at any time, but cannot retroactively alter scores. afterAction
+ * callbacks never revert so that legitimate state changes are never
+ * blocked by hook side-effects.
  *
- * @custom:security-contact security@maiat.io
  */
 
 contract TrustGateACPHook is IACPHook, OwnableUpgradeable {
@@ -273,10 +292,9 @@ contract TrustGateACPHook is IACPHook, OwnableUpgradeable {
         );
         if (!success || data.length < 32) return baseThreshold;
 
-        // [HIGH-1 FIX] Use abi.decode for safe extraction of budget from Job struct
+        // Use abi.decode for safe extraction — handles dynamic types (string) correctly
         // Job struct: (uint256 id, address client, address provider, address evaluator,
         //              address hook, string description, uint256 budget, uint256 expiredAt, uint8 status)
-        // abi.decode handles dynamic types (string) correctly, unlike raw assembly
         (,,,,,, budget,,) = abi.decode(
             data,
             (uint256, address, address, address, address, string, uint256, uint256, uint8)
@@ -293,8 +311,7 @@ contract TrustGateACPHook is IACPHook, OwnableUpgradeable {
     }
 
     function _checkTrust(uint256 jobId, address agent, uint256 threshold) internal {
-        ITrustOracle.UserReputation memory rep = oracle.getUserData(agent);
-        uint256 score = rep.initialized ? rep.reputationScore : 0;
+        uint256 score = oracle.getTrustScore(agent);
         // Sanity bound
         if (score > MAX_TRUST_SCORE) score = MAX_TRUST_SCORE;
 

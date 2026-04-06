@@ -13,14 +13,17 @@ import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.s
 //////////////////////////////////////////////////////////////*/
 
 contract MockOracle is ITrustOracle {
-    mapping(address => UserReputation) public reps;
+    mapping(address => uint256) private _scores;
+    mapping(address => bool) private _initialized;
 
     function setRep(address user, uint256 score, bool initialized) external {
-        reps[user] = UserReputation(score, 0, 0, 0, initialized, block.timestamp);
+        _scores[user] = score;
+        _initialized[user] = initialized;
     }
 
-    function getUserData(address user) external view override returns (UserReputation memory) {
-        return reps[user];
+    function getTrustScore(address user) external view override returns (uint256 score) {
+        if (!_initialized[user]) return 0;
+        score = _scores[user];
     }
 }
 

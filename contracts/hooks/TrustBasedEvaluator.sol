@@ -7,23 +7,42 @@ import {ITrustOracle} from "../interfaces/ITrustOracle.sol";
 
 /**
  * @title TrustBasedEvaluator
- * @notice Example evaluator that uses an external trust oracle to verify
- *         job deliverables. Demonstrates how to build an ERC-8183 evaluator
- *         that goes beyond simple approve/reject.
+ * @notice Automatically approves or rejects job deliverables based on the
+ *         provider's on-chain trust score, eliminating the need for a human
+ *         arbitrator on routine jobs.
  *
- * @dev This is a REFERENCE IMPLEMENTATION — adapt for your use case.
+ * USE CASE
+ * --------
+ * Many ACP jobs are low-value and routine. Requiring a human evaluator for
+ * every outcome is slow and expensive. This evaluator delegates the
+ * approve/reject decision to an external trust oracle: providers whose
+ * score meets or exceeds a configurable threshold are automatically
+ * completed; those below it are rejected. Outcomes are reported back to
+ * EvaluatorRegistry so the evaluator's own performance is tracked.
  *
- * Pattern:
- *   1. Provider submits deliverable
- *   2. AgenticCommerce calls evaluator.evaluate(jobId) (or off-chain keeper)
- *   3. Evaluator checks provider trust score from oracle
- *   4. Returns complete() or reject() to AgenticCommerce
- *   5. Calls registry.recordOutcome() to update on-chain performance stats
+ * FLOW (all interactions through core contract → hook callbacks)
+ * ----
+ *  1. createJob(provider, evaluator=this, expiredAt, description, hook)
+ *  2. fund(jobId, optParams) — job moves to Funded state.
+ *  3. submit(jobId, deliverable, optParams) — job moves to Submitted state.
+ *  4. evaluate(jobId) called by an off-chain keeper or any permissionless
+ *     caller:
+ *       a. Fetch job from AgenticCommerce; verify status == Submitted and
+ *          evaluator == address(this).
+ *       b. Query oracle.getUserData(provider) for reputationScore.
+ *       c. If score >= minTrustScore → agenticCommerce.complete(jobId, ...)
+ *          else → agenticCommerce.reject(jobId, ...)
+ *       d. Call registry.recordOutcome(address(this), approved) to update
+ *          this evaluator's on-chain performance stats.
  *
- * Trust oracle interface:
- *   getUserData(address) → { reputationScore, initialized, ... }
+ * TRUST MODEL
+ * -----------
+ * The trust score is read from an immutable oracle reference. The owner
+ * controls minTrustScore and oracle address but cannot retroactively
+ * change provider scores. Each jobId can only be evaluated once (CEI
+ * pattern with evaluated[jobId] guard). External calls to AgenticCommerce
+ * and EvaluatorRegistry happen last, after all state changes.
  *
- * @custom:security-contact security@maiat.io
  */
 
 /// @notice Minimal AgenticCommerce interface for evaluation
@@ -170,9 +189,8 @@ contract TrustBasedEvaluator is OwnableUpgradeable, ReentrancyGuard {
         evaluated[jobId] = true;
         totalEvaluated++;
 
-        // Check provider trust
-        ITrustOracle.UserReputation memory rep = oracle.getUserData(job.provider);
-        uint256 score = rep.initialized ? rep.reputationScore : 0;
+        // Check provider trust via vendor-neutral ITrustOracle
+        uint256 score = oracle.getTrustScore(job.provider);
         // Sanity bound on oracle score
         if (score > MAX_TRUST_SCORE) score = MAX_TRUST_SCORE;
 
