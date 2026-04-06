@@ -53,6 +53,20 @@ contract TrustGateACPHook is IACPHook, OwnableUpgradeable {
         uint256 requiredScore;
     }
 
+    /// @dev Local mirror of AgenticCommerceHooked.Job (fields up to budget).
+    ///      Must stay in sync with the canonical struct layout.
+    ///      Using a struct type in abi.decode correctly handles the outer ABI
+    ///      offset that Solidity adds when returning dynamic-field structs.
+    struct _ACJob {
+        uint256 id;
+        address client;
+        address provider;
+        address evaluator;
+        address hook;
+        string description;
+        uint256 budget;
+    }
+
     /*//////////////////////////////////////////////////////////////
                             CONSTANTS
     //////////////////////////////////////////////////////////////*/
@@ -150,18 +164,27 @@ contract TrustGateACPHook is IACPHook, OwnableUpgradeable {
      * @notice Called before state transitions. Reverts to block.
      * @dev Only callable by AgenticCommerce.
      */
-    function beforeAction(uint256 jobId, bytes4 selector, bytes calldata data) external override {
+    function beforeAction(uint256 jobId, bytes4 selector, bytes calldata) external override {
         if (msg.sender != agenticCommerce) revert TrustGateACPHook__OnlyAgenticCommerce();
 
-        if (selector == FUND_SEL) {
-            (address caller,) = abi.decode(data, (address, bytes));
-            if (caller == address(0)) return; // Skip trust check for zero address
-            uint256 threshold = _effectiveThreshold(jobId, clientThreshold);
-            _checkTrust(jobId, caller, threshold);
-        } else if (selector == SUBMIT_SEL) {
-            (address caller,,) = abi.decode(data, (address, bytes32, bytes));
+        if (selector == FUND_SEL || selector == SUBMIT_SEL) {
+            // Read caller from authoritative job state — never trust user-controlled calldata.
+            // job.client is enforced by ACP for fund(); job.provider for submit().
+            (bool ok, bytes memory raw) = agenticCommerce.staticcall(
+                abi.encodeWithSignature("getJob(uint256)", jobId)
+            );
+            if (!ok || raw.length < 32) return;
+
+            // Decode as struct type so abi.decode handles the outer ABI offset
+            // that Solidity inserts when returning a dynamic-field struct from a function.
+            _ACJob memory job = abi.decode(raw, (_ACJob));
+
+            bool isFund = (selector == FUND_SEL);
+            address caller = isFund ? job.client : job.provider;
             if (caller == address(0)) return;
-            uint256 threshold = _effectiveThreshold(jobId, providerThreshold);
+
+            uint256 base = isFund ? clientThreshold : providerThreshold;
+            uint256 threshold = _effectiveThreshold(jobId, base);
             _checkTrust(jobId, caller, threshold);
         }
         // Other selectors: pass through
@@ -292,13 +315,10 @@ contract TrustGateACPHook is IACPHook, OwnableUpgradeable {
         );
         if (!success || data.length < 32) return baseThreshold;
 
-        // Use abi.decode for safe extraction — handles dynamic types (string) correctly
-        // Job struct: (uint256 id, address client, address provider, address evaluator,
-        //              address hook, string description, uint256 budget, uint256 expiredAt, uint8 status)
-        (,,,,,, budget,,) = abi.decode(
-            data,
-            (uint256, address, address, address, address, string, uint256, uint256, uint8)
-        );
+        // Decode as struct type so abi.decode handles the outer ABI offset
+        // that Solidity inserts when returning a dynamic-field struct from a function.
+        _ACJob memory _job = abi.decode(data, (_ACJob));
+        budget = _job.budget;
 
         uint256 len = _tiers.length;
         uint256 result = baseThreshold;

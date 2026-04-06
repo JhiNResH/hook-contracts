@@ -282,6 +282,9 @@ contract TrustGateACPHookTest is Test {
         );
         ERC1967Proxy proxy = new ERC1967Proxy(address(impl), initData);
         hook = TrustGateACPHook(address(proxy));
+
+        // Seed job id=1 so beforeAction can look up client/provider via staticcall
+        ac.addJob(1, client, provider, address(0), 0);
     }
 
     // --- Constructor ---
@@ -304,7 +307,7 @@ contract TrustGateACPHookTest is Test {
     function test_beforeAction_revertNotAC() public {
         vm.prank(makeAddr("rando"));
         vm.expectRevert(TrustGateACPHook.TrustGateACPHook__OnlyAgenticCommerce.selector);
-        hook.beforeAction(1, FUND_SEL, abi.encode(client, bytes("")));
+        hook.beforeAction(1, FUND_SEL, bytes(""));
     }
 
     function test_afterAction_revertNotAC() public {
@@ -318,7 +321,7 @@ contract TrustGateACPHookTest is Test {
     function test_beforeAction_fund_passes() public {
         oracle.setRep(client, 80, true);
         vm.prank(address(ac));
-        hook.beforeAction(1, FUND_SEL, abi.encode(client, bytes("")));
+        hook.beforeAction(1, FUND_SEL, bytes(""));
         // No revert = pass
     }
 
@@ -326,20 +329,20 @@ contract TrustGateACPHookTest is Test {
         oracle.setRep(client, 30, true);
         vm.prank(address(ac));
         vm.expectRevert();
-        hook.beforeAction(1, FUND_SEL, abi.encode(client, bytes("")));
+        hook.beforeAction(1, FUND_SEL, bytes(""));
     }
 
     function test_beforeAction_submit_passes() public {
         oracle.setRep(provider, 80, true);
         vm.prank(address(ac));
-        hook.beforeAction(1, SUBMIT_SEL, abi.encode(provider, bytes32(0), bytes("")));
+        hook.beforeAction(1, SUBMIT_SEL, bytes(""));
     }
 
     function test_beforeAction_submit_reverts_lowTrust() public {
         oracle.setRep(provider, 40, true);
         vm.prank(address(ac));
         vm.expectRevert();
-        hook.beforeAction(1, SUBMIT_SEL, abi.encode(provider, bytes32(0), bytes("")));
+        hook.beforeAction(1, SUBMIT_SEL, bytes(""));
     }
 
     // --- afterAction ---
