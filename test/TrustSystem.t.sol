@@ -267,7 +267,7 @@ contract TrustGateACPHookTest is Test {
     address public client = makeAddr("client");
     address public provider = makeAddr("provider");
 
-    bytes4 public constant FUND_SEL = bytes4(keccak256("fund(uint256,bytes)"));
+    bytes4 public constant FUND_SEL = bytes4(keccak256("fund(uint256,uint256,bytes)"));
     bytes4 public constant SUBMIT_SEL = bytes4(keccak256("submit(uint256,bytes32,bytes)"));
     bytes4 public constant COMPLETE_SEL = bytes4(keccak256("complete(uint256,bytes32,bytes)"));
 

@@ -64,7 +64,7 @@ contract TrustGateACPHook is IACPHook, OwnableUpgradeable {
     uint256 public constant MAX_TRUST_SCORE = 100;
 
     /// @dev Well-known selectors from AgenticCommerce
-    bytes4 public constant FUND_SEL     = bytes4(keccak256("fund(uint256,bytes)"));
+    bytes4 public constant FUND_SEL     = bytes4(keccak256("fund(uint256,uint256,bytes)"));
     bytes4 public constant SUBMIT_SEL   = bytes4(keccak256("submit(uint256,bytes32,bytes)"));
     bytes4 public constant COMPLETE_SEL = bytes4(keccak256("complete(uint256,bytes32,bytes)"));
     bytes4 public constant REJECT_SEL   = bytes4(keccak256("reject(uint256,bytes32,bytes)"));

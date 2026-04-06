@@ -54,11 +54,11 @@ interface IAgenticCommerce {
         address client;
         address provider;
         address evaluator;
+        address hook;        // must match AgenticCommerceHooked.Job field order
         string description;
         uint256 budget;
         uint256 expiredAt;
         JobStatus status;
-        address hook;
     }
 
     function getJob(uint256 jobId) external view returns (Job memory);
