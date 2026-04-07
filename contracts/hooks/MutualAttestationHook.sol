@@ -3,6 +3,7 @@ pragma solidity ^0.8.20;
 
 import {BaseACPHook} from "../BaseACPHook.sol";
 import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
+import {IAttestationService} from "../interfaces/IAttestationService.sol";
 
 /// @notice Minimal interface to read job participants from AgenticCommerceHooked
 interface IAgenticCommerceReader {
@@ -20,35 +21,18 @@ interface IAgenticCommerceReader {
     function getJob(uint256 jobId) external view returns (Job memory);
 }
 
-/// @notice Minimal EAS interface (Base: 0x4200000000000000000000000000000000000021)
-interface IEAS {
-    struct AttestationRequestData {
-        address recipient;
-        uint64 expirationTime;
-        bool revocable;
-        bytes32 refUID;
-        bytes data;
-        uint256 value;
-    }
-
-    struct AttestationRequest {
-        bytes32 schema;
-        AttestationRequestData data;
-    }
-
-    function attest(AttestationRequest calldata request) external payable returns (bytes32);
-}
-
 /// @title MutualAttestationHook
 /// @notice Airbnb-style mutual reviews -- both client and provider attest each other after job completion.
-/// @dev Creates two EAS attestations per completed job: one from each party.
+/// @dev Creates two attestations per completed job: one from each party.
+///      Compatible with EAS (Base), BAS (BSC), and SimpleAttestation (X Layer) —
+///      inject the correct address at construction time.
 ///      Bad clients who post vague specs get low scores from providers.
 ///      Bad providers who deliver garbage get low scores from clients.
 ///      Both sides build reputation. Both sides are accountable.
 /// @custom:security-contact security@maiat.xyz
 contract MutualAttestationHook is BaseACPHook, ReentrancyGuard {
-    /// @notice EAS contract for attestations
-    IEAS public immutable eas;
+    /// @notice Attestation service (EAS / BAS / SimpleAttestation)
+    IAttestationService public immutable attestationService;
 
     /// @notice Schema UID for mutual attestations
     bytes32 public immutable schemaUID;
@@ -92,11 +76,11 @@ contract MutualAttestationHook is BaseACPHook, ReentrancyGuard {
 
     constructor(
         address acpContract_,
-        address eas_,
+        address attestationService_,
         bytes32 schemaUID_,
         uint256 reviewWindow_
     ) BaseACPHook(acpContract_) {
-        eas = IEAS(eas_);
+        attestationService = IAttestationService(attestationService_);
         schemaUID = schemaUID_;
         reviewWindow = reviewWindow_ == 0 ? 7 days : reviewWindow_;
     }
@@ -225,10 +209,10 @@ contract MutualAttestationHook is BaseACPHook, ReentrancyGuard {
         string calldata comment,
         bool isClientReview
     ) internal returns (bytes32) {
-        return eas.attest(
-            IEAS.AttestationRequest({
+        return attestationService.attest(
+            IAttestationService.AttestationRequest({
                 schema: schemaUID,
-                data: IEAS.AttestationRequestData({
+                data: IAttestationService.AttestationRequestData({
                     recipient: reviewee,
                     expirationTime: 0,
                     revocable: false,
