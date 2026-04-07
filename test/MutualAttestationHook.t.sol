@@ -3,13 +3,14 @@ pragma solidity ^0.8.20;
 
 import "forge-std/Test.sol";
 import "../contracts/hooks/MutualAttestationHook.sol";
+import "../contracts/interfaces/IAttestationService.sol";
 
-/// @notice Mock EAS that records attestations
-contract MockEAS {
+/// @notice Mock attestation service (stands in for EAS / BAS / SimpleAttestation)
+contract MockAttestationService {
     uint256 public attestCount;
     mapping(uint256 => bytes) public attestData;
 
-    function attest(IEAS.AttestationRequest calldata request) external payable returns (bytes32) {
+    function attest(IAttestationService.AttestationRequest calldata request) external payable returns (bytes32) {
         attestCount++;
         attestData[attestCount] = request.data.data;
         return bytes32(attestCount);
@@ -53,7 +54,7 @@ contract MockACP {
 
 contract MutualAttestationHookTest is Test {
     MutualAttestationHook public hook;
-    MockEAS public mockEAS;
+    MockAttestationService public mockAttestation;
     MockACP public mockACP;
 
     address client = address(0xC1C1);
@@ -63,11 +64,11 @@ contract MutualAttestationHookTest is Test {
     bytes32 schemaUID = bytes32(uint256(0xDEAD));
 
     function setUp() public {
-        mockEAS = new MockEAS();
+        mockAttestation = new MockAttestationService();
         mockACP = new MockACP();
         hook = new MutualAttestationHook(
             address(mockACP),
-            address(mockEAS),
+            address(mockAttestation),
             schemaUID,
             7 days
         );
@@ -128,7 +129,7 @@ contract MutualAttestationHookTest is Test {
 
         assertTrue(hook.clientReviewed(jobId));
         assertFalse(hook.providerReviewed(jobId));
-        assertEq(mockEAS.attestCount(), 1);
+        assertEq(mockAttestation.attestCount(), 1);
     }
 
     function test_providerCanReviewClient() public {
@@ -137,7 +138,7 @@ contract MutualAttestationHookTest is Test {
 
         assertFalse(hook.clientReviewed(jobId));
         assertTrue(hook.providerReviewed(jobId));
-        assertEq(mockEAS.attestCount(), 1);
+        assertEq(mockAttestation.attestCount(), 1);
     }
 
     function test_mutualReviewComplete() public {
@@ -149,7 +150,7 @@ contract MutualAttestationHookTest is Test {
         assertTrue(hook.clientReviewed(jobId));
         assertTrue(hook.providerReviewed(jobId));
         assertTrue(hook.isFullyReviewed(jobId));
-        assertEq(mockEAS.attestCount(), 2);
+        assertEq(mockAttestation.attestCount(), 2);
     }
 
     // === Score Validation ===
@@ -175,7 +176,7 @@ contract MutualAttestationHookTest is Test {
             vm.prank(client);
             hook.submitClientReview(jid, score, "OK");
         }
-        assertEq(mockEAS.attestCount(), 5);
+        assertEq(mockAttestation.attestCount(), 5);
     }
 
     // === Double Review Prevention ===
@@ -212,7 +213,7 @@ contract MutualAttestationHookTest is Test {
         vm.warp(block.timestamp + 6 days);
         vm.prank(client);
         hook.submitClientReview(jobId, 5, "Just in time");
-        assertEq(mockEAS.attestCount(), 1);
+        assertEq(mockAttestation.attestCount(), 1);
     }
 
     // === Job Not Completed ===
@@ -236,11 +237,11 @@ contract MutualAttestationHookTest is Test {
 
         vm.prank(client);
         hook.submitClientReview(rejectedJob, 2, "Provider ghosted");
-        assertEq(mockEAS.attestCount(), 1);
+        assertEq(mockAttestation.attestCount(), 1);
 
         vm.prank(provider);
         hook.submitProviderReview(rejectedJob, 1, "Vague specs");
-        assertEq(mockEAS.attestCount(), 2);
+        assertEq(mockAttestation.attestCount(), 2);
         assertTrue(hook.isFullyReviewed(rejectedJob));
     }
 
@@ -271,7 +272,7 @@ contract MutualAttestationHookTest is Test {
         vm.prank(client);
         hook.submitClientReview(jobId, 5, "Excellent work");
 
-        bytes memory attestData = mockEAS.attestData(1);
+        bytes memory attestData = mockAttestation.attestData(1);
         (
             uint256 decodedJobId,
             address reviewer,
@@ -293,7 +294,7 @@ contract MutualAttestationHookTest is Test {
         vm.prank(provider);
         hook.submitProviderReview(jobId, 3, "Vague specs");
 
-        bytes memory attestData = mockEAS.attestData(1);
+        bytes memory attestData = mockAttestation.attestData(1);
         (,,, uint8 score, string memory comment, bool isClientReview) =
             abi.decode(attestData, (uint256, address, address, uint8, string, bool));
 
@@ -366,7 +367,7 @@ contract MutualAttestationHookTest is Test {
         vm.assume(score >= 1 && score <= 5);
         vm.prank(client);
         hook.submitClientReview(jobId, score, "Fuzz");
-        assertEq(mockEAS.attestCount(), 1);
+        assertEq(mockAttestation.attestCount(), 1);
     }
 
     function testFuzz_invalidScores(uint8 score) public {
@@ -391,14 +392,14 @@ contract MutualAttestationHookTest is Test {
 
     function test_defaultReviewWindow() public {
         MutualAttestationHook hook2 = new MutualAttestationHook(
-            address(mockACP), address(mockEAS), schemaUID, 0
+            address(mockACP), address(mockAttestation), schemaUID, 0
         );
         assertEq(hook2.reviewWindow(), 7 days);
     }
 
     function test_customReviewWindow() public {
         MutualAttestationHook hook3 = new MutualAttestationHook(
-            address(mockACP), address(mockEAS), schemaUID, 3 days
+            address(mockACP), address(mockAttestation), schemaUID, 3 days
         );
         assertEq(hook3.reviewWindow(), 3 days);
     }
