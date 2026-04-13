@@ -110,7 +110,7 @@ contract AgenticCommerceHooked is AccessControl, ReentrancyGuard {
 
     function _afterHook(address hook, uint256 jobId, bytes4 selector, bytes memory data) internal {
         if (hook != address(0)) {
-            IACPHook(hook).afterAction{gas: HOOK_GAS_LIMIT}(jobId, selector, data);
+            try IACPHook(hook).afterAction{gas: HOOK_GAS_LIMIT}(jobId, selector, data) {} catch {}
         }
     }
 
