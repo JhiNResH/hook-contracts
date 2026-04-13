@@ -157,7 +157,7 @@ contract CloseAndSettleTest is Test {
     function _sign(uint256 jobId, uint8 finalScore, uint16 callCount, uint8 passRate)
         internal view returns (bytes memory sig)
     {
-        bytes32 digest = keccak256(abi.encodePacked(jobId, finalScore, callCount, passRate));
+        bytes32 digest = keccak256(abi.encodePacked(block.chainid, address(acp), jobId, finalScore, callCount, passRate));
         bytes32 ethHash = MessageHashUtils.toEthSignedMessageHash(digest);
         (uint8 v, bytes32 r, bytes32 s) = vm.sign(gatewayKey, ethHash);
         sig = abi.encodePacked(r, s, v);
@@ -301,7 +301,7 @@ contract CloseAndSettleTest is Test {
 
         // Sign with wrong key
         uint256 wrongKey = 0xDEAD;
-        bytes32 digest = keccak256(abi.encodePacked(jobId, uint8(100), uint16(5), uint8(100)));
+        bytes32 digest = keccak256(abi.encodePacked(block.chainid, address(acp), jobId, uint8(100), uint16(5), uint8(100)));
         bytes32 ethHash = MessageHashUtils.toEthSignedMessageHash(digest);
         (uint8 v, bytes32 r, bytes32 s) = vm.sign(wrongKey, ethHash);
         bytes memory badSig = abi.encodePacked(r, s, v);

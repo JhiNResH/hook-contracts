@@ -291,7 +291,7 @@ contract AgenticCommerceHooked is AccessControl, ReentrancyGuard {
         if (trustedGateway == address(0)) revert TrustedGatewayNotSet();
 
         // Verify gateway ECDSA signature
-        bytes32 digest = keccak256(abi.encodePacked(jobId, finalScore, callCount, passRate));
+        bytes32 digest = keccak256(abi.encodePacked(block.chainid, address(this), jobId, finalScore, callCount, passRate));
         bytes32 ethHash = MessageHashUtils.toEthSignedMessageHash(digest);
         address signer = ECDSA.recover(ethHash, gatewaySignature);
         if (signer != trustedGateway) revert InvalidGatewaySignature();
