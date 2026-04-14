@@ -296,7 +296,7 @@ contract AgenticCommerceHooked is AccessControl, ReentrancyGuard {
     ) external nonReentrant {
         Job storage job = jobs[jobId];
         if (job.id == 0) revert InvalidJob();
-        if (job.status != JobStatus.Funded) revert WrongStatus();
+        if (job.status != JobStatus.Funded && job.status != JobStatus.Submitted) revert WrongStatus();
         if (msg.sender != job.client) revert Unauthorized();
         if (trustedGateway == address(0)) revert TrustedGatewayNotSet();
 
