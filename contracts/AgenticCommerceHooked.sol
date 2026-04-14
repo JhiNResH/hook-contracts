@@ -63,6 +63,7 @@ contract AgenticCommerceHooked is AccessControl, ReentrancyGuard {
 
     event JobCreated(uint256 indexed jobId, address indexed client, address indexed provider, address evaluator, uint256 expiredAt, address hook);
     event JobSettled(uint256 indexed jobId, address indexed client, uint8 passRate, bool passed);
+    event HookDisabled(uint256 indexed jobId);
     event TrustedGatewayUpdated(address indexed newGateway);
     event ProviderSet(uint256 indexed jobId, address indexed provider);
     event BudgetSet(uint256 indexed jobId, uint256 amount);
@@ -104,7 +105,7 @@ contract AgenticCommerceHooked is AccessControl, ReentrancyGuard {
 
     function _beforeHook(address hook, uint256 jobId, bytes4 selector, bytes memory data) internal {
         if (hook != address(0)) {
-            IACPHook(hook).beforeAction{gas: HOOK_GAS_LIMIT}(jobId, selector, data);
+            try IACPHook(hook).beforeAction{gas: HOOK_GAS_LIMIT}(jobId, selector, data) {} catch {}
         }
     }
 
@@ -259,6 +260,15 @@ contract AgenticCommerceHooked is AccessControl, ReentrancyGuard {
     function setTrustedGateway(address gateway_) external onlyRole(ADMIN_ROLE) {
         trustedGateway = gateway_;
         emit TrustedGatewayUpdated(gateway_);
+    }
+
+    /// @notice Admin emergency: clears a broken hook to unblock a stuck job.
+    /// @dev Does not alter job status or funds — only removes the hook reference.
+    function emergencyDisableHook(uint256 jobId) external onlyRole(ADMIN_ROLE) {
+        Job storage job = jobs[jobId];
+        if (job.id == 0) revert InvalidJob();
+        job.hook = address(0);
+        emit HookDisabled(jobId);
     }
 
     /**
