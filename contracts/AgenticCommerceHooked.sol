@@ -125,6 +125,7 @@ contract AgenticCommerceHooked is AccessControl, ReentrancyGuard {
         address hook
     ) external returns (uint256 jobId) {
         if (evaluator == address(0)) revert ZeroAddress();
+        if (evaluator == msg.sender) revert Unauthorized(); // client cannot self-evaluate
         if (expiredAt <= block.timestamp + 5 minutes) revert ExpiryTooShort();
         jobId = ++jobCounter;
         jobs[jobId] = Job({
