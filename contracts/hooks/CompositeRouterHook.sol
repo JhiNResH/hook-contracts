@@ -101,6 +101,7 @@ contract CompositeRouterHook is IACPHook, OwnableUpgradeable {
     error CompositeRouterHook__MaxPluginsReached();
     error CompositeRouterHook__PluginAlreadyRegistered(address hook);
     error CompositeRouterHook__PluginNotFound(address hook);
+    error CompositeRouterHook__PluginReverted(address hook, uint256 jobId);
 
     /*//////////////////////////////////////////////////////////////
                             CONSTRUCTOR
@@ -154,8 +155,15 @@ contract CompositeRouterHook is IACPHook, OwnableUpgradeable {
         for (uint256 i = 0; i < len; i++) {
             Plugin storage plugin = s_plugins[sortedIndices[i]];
             if (plugin.enabled) {
-                // No try/catch — revert propagates to block the action
-                plugin.hook.beforeAction(jobId, selector, data);
+                // Wrap in try/catch to emit the failing plugin address before re-reverting.
+                // Blocking behaviour is preserved — a failing beforeAction plugin still
+                // prevents the job action from proceeding.
+                try plugin.hook.beforeAction(jobId, selector, data) {
+                    // Success — continue to next plugin
+                } catch (bytes memory reason) {
+                    emit PluginBeforeActionFailed(address(plugin.hook), jobId, reason);
+                    revert CompositeRouterHook__PluginReverted(address(plugin.hook), jobId);
+                }
             }
         }
     }
