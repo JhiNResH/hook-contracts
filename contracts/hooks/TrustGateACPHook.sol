@@ -125,6 +125,7 @@ contract TrustGateACPHook is IACPHook, OwnableUpgradeable {
     error TrustGateACPHook__OnlyAgenticCommerce();
     error TrustGateACPHook__MaxTiersReached();
     error TrustGateACPHook__TierNotFound(uint256 minValue);
+    error TrustGateACPHook__GetJobFailed(uint256 jobId);
 
     /*//////////////////////////////////////////////////////////////
                             CONSTRUCTOR
@@ -173,7 +174,7 @@ contract TrustGateACPHook is IACPHook, OwnableUpgradeable {
             (bool ok, bytes memory raw) = agenticCommerce.staticcall(
                 abi.encodeWithSignature("getJob(uint256)", jobId)
             );
-            if (!ok || raw.length < 32) return;
+            if (!ok || raw.length < 32) revert TrustGateACPHook__GetJobFailed(jobId);
 
             // Decode as struct type so abi.decode handles the outer ABI offset
             // that Solidity inserts when returning a dynamic-field struct from a function.
