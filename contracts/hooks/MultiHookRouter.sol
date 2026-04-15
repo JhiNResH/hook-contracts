@@ -9,17 +9,27 @@ import "@openzeppelin/contracts/utils/introspection/ERC165Checker.sol";
 import "@openzeppelin/contracts/utils/ReentrancyGuardTransient.sol";
 
 /// @title MultiHookRouter
-/// @notice Routes hook callbacks to an ordered list of sub-hooks per job.
+/// @notice Routes hook callbacks to an ordered list of sub-hooks per job,
+///         with global default hooks as fallback for unconfigured jobs.
 /// @dev Implements IACPHook so the core contract sees it as a single hook.
 ///      Non-upgradeable by design — hooks should be immutable once deployed.
 ///      Sub-hooks must be whitelisted on the core contract to be used.
 ///      Exposes passthrough view functions so sub-hooks deployed with
 ///      acpContract = routerAddress can call _core().getJob() etc.
+///
+///      Hook resolution order:
+///        1. Per-job hooks (if configured) — highest priority
+///        2. Global default hooks (fallback) — runs for all unconfigured jobs
 contract MultiHookRouter is ERC165, IACPHook, ReentrancyGuardTransient, Ownable {
     // ──────────────────── Immutables ────────────────────
 
     /// @notice The ACP core contract
     address public immutable acpContract;
+
+    // ──────────────────── Constants ────────────────────
+
+    /// @notice Maximum global hooks (gas safety)
+    uint256 public constant MAX_GLOBAL_HOOKS = 10;
 
     // ──────────────────── Storage ────────────────────
 
@@ -28,6 +38,12 @@ contract MultiHookRouter is ERC165, IACPHook, ReentrancyGuardTransient, Ownable 
 
     /// @notice Per-job ordered list of sub-hooks
     mapping(uint256 jobId => address[] hooks) private _jobHooks;
+
+    /// @notice Global default hooks — executed for jobs without per-job config
+    address[] private _globalHooks;
+
+    /// @notice Tracks registered global hooks for duplicate prevention
+    mapping(address => bool) private _isGlobalHook;
 
     // ──────────────────── Errors ────────────────────
 
@@ -42,6 +58,9 @@ contract MultiHookRouter is ERC165, IACPHook, ReentrancyGuardTransient, Ownable 
     error EmptyArray();
     error HookSetMismatch();
     error SubHookNotWhitelisted();
+    error TooManyGlobalHooks();
+    error GlobalHookAlreadyRegistered();
+    error GlobalHookNotFound();
 
     // ──────────────────── Events ────────────────────
 
@@ -50,6 +69,9 @@ contract MultiHookRouter is ERC165, IACPHook, ReentrancyGuardTransient, Ownable 
     event HookRemoved(uint256 indexed jobId, address indexed hook);
     event HooksReordered(uint256 indexed jobId, address[] hooks);
     event MaxHooksPerJobUpdated(uint256 oldMax, uint256 newMax);
+    event GlobalHookAdded(address indexed hook);
+    event GlobalHookRemoved(address indexed hook);
+    event GlobalHooksReordered(address[] hooks);
 
     // ──────────────────── Modifiers ────────────────────
 
@@ -88,7 +110,58 @@ contract MultiHookRouter is ERC165, IACPHook, ReentrancyGuardTransient, Ownable 
         emit MaxHooksPerJobUpdated(oldMax, newMax);
     }
 
-    // ──────────────────── Configuration ────────────────────
+    // ──────────────────── Global Hooks ────────────────────
+
+    /// @notice Add a global default hook (appended to end of list)
+    /// @param hook The hook address to add
+    function addGlobalHook(address hook) external onlyOwner {
+        _validateSubHook(hook);
+        if (_isGlobalHook[hook]) revert GlobalHookAlreadyRegistered();
+        if (_globalHooks.length >= MAX_GLOBAL_HOOKS) revert TooManyGlobalHooks();
+
+        _globalHooks.push(hook);
+        _isGlobalHook[hook] = true;
+        emit GlobalHookAdded(hook);
+    }
+
+    /// @notice Remove a global default hook
+    /// @param hook The hook address to remove
+    function removeGlobalHook(address hook) external onlyOwner {
+        if (!_isGlobalHook[hook]) revert GlobalHookNotFound();
+
+        uint256 len = _globalHooks.length;
+        for (uint256 i; i < len; ) {
+            if (_globalHooks[i] == hook) {
+                _globalHooks[i] = _globalHooks[len - 1];
+                _globalHooks.pop();
+                _isGlobalHook[hook] = false;
+                emit GlobalHookRemoved(hook);
+                return;
+            }
+            unchecked { ++i; }
+        }
+    }
+
+    /// @notice Replace global hooks with a reordered version (must be a permutation)
+    /// @param hooks New ordering (must contain the same hooks)
+    function reorderGlobalHooks(address[] calldata hooks) external onlyOwner {
+        if (hooks.length != _globalHooks.length) revert HookSetMismatch();
+        if (hooks.length == 0) revert EmptyArray();
+
+        for (uint256 i; i < hooks.length; ) {
+            for (uint256 k; k < i; ) {
+                if (hooks[k] == hooks[i]) revert DuplicateHook();
+                unchecked { ++k; }
+            }
+            if (!_isGlobalHook[hooks[i]]) revert GlobalHookNotFound();
+            unchecked { ++i; }
+        }
+
+        _globalHooks = hooks;
+        emit GlobalHooksReordered(hooks);
+    }
+
+    // ──────────────────── Per-Job Configuration ────────────────────
 
     /// @notice Replace the entire hook list for a job
     /// @param jobId The job ID
@@ -200,7 +273,7 @@ contract MultiHookRouter is ERC165, IACPHook, ReentrancyGuardTransient, Ownable 
         bytes4 selector,
         bytes calldata data
     ) external override onlyACP nonReentrant {
-        address[] storage hooks = _jobHooks[jobId];
+        address[] memory hooks = _resolveHooks(jobId);
         uint256 len = hooks.length;
         for (uint256 i; i < len; ) {
             IACPHook(hooks[i]).beforeAction(jobId, selector, data);
@@ -214,7 +287,7 @@ contract MultiHookRouter is ERC165, IACPHook, ReentrancyGuardTransient, Ownable 
         bytes4 selector,
         bytes calldata data
     ) external override onlyACP nonReentrant {
-        address[] storage hooks = _jobHooks[jobId];
+        address[] memory hooks = _resolveHooks(jobId);
         uint256 len = hooks.length;
         for (uint256 i; i < len; ) {
             IACPHook(hooks[i]).afterAction(jobId, selector, data);
@@ -231,14 +304,34 @@ contract MultiHookRouter is ERC165, IACPHook, ReentrancyGuardTransient, Ownable 
 
     // ──────────────────── Views ────────────────────
 
-    /// @notice Get the ordered hook list for a job
+    /// @notice Get the per-job hook list (empty if using global defaults)
     function getHooks(uint256 jobId) external view returns (address[] memory) {
         return _jobHooks[jobId];
     }
 
-    /// @notice Get the number of hooks configured for a job
+    /// @notice Get the number of per-job hooks configured
     function hookCount(uint256 jobId) external view returns (uint256) {
         return _jobHooks[jobId].length;
+    }
+
+    /// @notice Get the global default hooks
+    function getGlobalHooks() external view returns (address[] memory) {
+        return _globalHooks;
+    }
+
+    /// @notice Get the number of global hooks
+    function globalHookCount() external view returns (uint256) {
+        return _globalHooks.length;
+    }
+
+    /// @notice Check if a hook is registered as a global default
+    function isGlobalHook(address hook) external view returns (bool) {
+        return _isGlobalHook[hook];
+    }
+
+    /// @notice Get the resolved hooks for a job (per-job if set, else global)
+    function resolveHooks(uint256 jobId) external view returns (address[] memory) {
+        return _resolveHooks(jobId);
     }
 
     // ──────────────────── ERC165 ────────────────────
@@ -252,6 +345,15 @@ contract MultiHookRouter is ERC165, IACPHook, ReentrancyGuardTransient, Ownable 
     }
 
     // ──────────────────── Internal ────────────────────
+
+    /// @dev Resolve which hooks to execute: per-job if configured, else global defaults
+    function _resolveHooks(uint256 jobId) internal view returns (address[] memory) {
+        address[] storage jobHooks = _jobHooks[jobId];
+        if (jobHooks.length > 0) {
+            return jobHooks;
+        }
+        return _globalHooks;
+    }
 
     /// @dev Validate a sub-hook: non-zero, whitelisted on core, supports IACPHook
     function _validateSubHook(address hook) private view {
