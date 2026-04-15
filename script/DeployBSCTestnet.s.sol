@@ -9,6 +9,8 @@ import {TrustBasedEvaluator} from "../contracts/hooks/TrustBasedEvaluator.sol";
 import {AttestationHook} from "../contracts/hooks/AttestationHook.sol";
 import {EvaluatorRegistry} from "../contracts/EvaluatorRegistry.sol";
 import {CompositeRouterHook} from "../contracts/hooks/CompositeRouterHook.sol";
+import {TrustUpdateHook} from "../contracts/hooks/TrustUpdateHook.sol";
+import {MutualAttestationHook} from "../contracts/hooks/MutualAttestationHook.sol";
 
 /// @title DeployBSCTestnet
 /// @notice Deploys AgenticCommerceHooked + all Maiat trust hooks on BSC testnet (chain 97)
@@ -114,6 +116,28 @@ contract DeployBSCTestnet is Script {
             console2.log("5. AttestationHook:      SKIPPED (set BAS_CONTRACT + BAS_SCHEMA_UID)");
         }
 
+        // 6. TrustUpdateHook (non-upgradeable)
+        //    Calls DojoTrustScore.updateScore() after closeAndSettle completes/rejects
+        TrustUpdateHook trustUpdate = new TrustUpdateHook(address(acp), trustOracle);
+        CompositeRouterHook(router).addPlugin(address(trustUpdate), 20);
+        console2.log("6. TrustUpdateHook:     ", address(trustUpdate));
+
+        // 7. MutualAttestationHook (non-upgradeable) — optional, needs BAS contract
+        //    Airbnb-style mutual reviews: client + provider attest each other post-settlement
+        address mutualAttest;
+        if (basContract != address(0) && basSchemaUID != bytes32(0)) {
+            mutualAttest = address(new MutualAttestationHook(
+                address(acp),
+                basContract,
+                basSchemaUID,
+                7 days
+            ));
+            CompositeRouterHook(router).addPlugin(mutualAttest, 25);
+            console2.log("7. MutualAttestationHook:", mutualAttest);
+        } else {
+            console2.log("7. MutualAttestationHook: SKIPPED (set BAS_CONTRACT + BAS_SCHEMA_UID)");
+        }
+
         vm.stopBroadcast();
 
         console2.log("\n=== BSC Testnet Addresses ===");
@@ -125,10 +149,16 @@ contract DeployBSCTestnet is Script {
         if (attestation != address(0)) {
             console2.log("AttestationHook:       ", attestation);
         }
+        console2.log("TrustUpdateHook:       ", address(trustUpdate));
+        if (mutualAttest != address(0)) {
+            console2.log("MutualAttestationHook: ", mutualAttest);
+        }
 
         console2.log("\nPost-deploy:");
         console2.log("  1. Set CompositeRouterHook as ACP hook for new jobs");
         console2.log("  2. Register TrustBasedEvaluator: registry.register('dojo', evaluator)");
-        console2.log("  3. Seed test scores on DojoTrustScore, then create an ACP job");
+        console2.log("  3. Grant EVALUATOR_ROLE on DojoTrustScore to TrustUpdateHook");
+        console2.log("  4. Call acp.setTrustedGateway(gateway) for closeAndSettle verification");
+        console2.log("  5. Seed test scores on DojoTrustScore, then create an ACP job");
     }
 }
