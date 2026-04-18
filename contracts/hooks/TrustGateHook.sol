@@ -19,7 +19,9 @@ import "@openzeppelin/contracts/access/Ownable.sol";
  *
  * Hook points:
  *   - _preFund(fund)      → Check client trust, revert if below threshold
- *   - _preSubmit(submit)  → Check provider trust, revert if below threshold
+ *   - _preSubmit(submit)  → Check provider trust, revert if below threshold.
+ *                           Also checks client trust when job status is Open
+ *                           (zero-budget path skips fund(), so _preFund never fires).
  *   - _postComplete       → Emit outcome event
  *   - _postReject         → Emit outcome event
  *
@@ -65,7 +67,8 @@ contract TrustGateHook is BaseERC8183Hook, Ownable {
     //////////////////////////////////////////////////////////////*/
 
     /**
-     * @param erc8183Contract_ Address of the ERC-8183 core (AgenticCommerce) or MultiHookRouter
+     * @param erc8183Contract_ Address of the ERC-8183 core (AgenticCommerce).
+     *                         TrustGateHook does not support router calls (_isAuthorizedRouter = false).
      * @param oracle_          Address of any IRNWYTrustOracle implementation
      * @param threshold_       Minimum trust score (0-95) to pass the gate
      * @param chainId_         Default chain ID for oracle lookups (e.g., 8453 for Base)
@@ -99,13 +102,20 @@ contract TrustGateHook is BaseERC8183Hook, Ownable {
     }
 
     /// @dev Gates the submit transition by provider trust score.
+    ///      Also gates the client on zero-budget jobs (status == Open), because
+    ///      those jobs skip fund() entirely, so _preFund never fires for the client.
     function _preSubmit(
         uint256 jobId,
         address caller,
         bytes32,
         bytes memory
     ) internal override {
-        _checkTrust(jobId, caller);
+        _checkTrust(jobId, caller); // provider
+
+        AgenticCommerce.Job memory job = AgenticCommerce(erc8183Contract).getJob(jobId);
+        if (job.status == AgenticCommerce.JobStatus.Open) {
+            _checkTrust(jobId, job.client); // client — zero-budget path only
+        }
     }
 
     /// @dev Records completion outcome. Never reverts.
