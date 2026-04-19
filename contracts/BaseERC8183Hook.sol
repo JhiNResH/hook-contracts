@@ -39,15 +39,24 @@ abstract contract BaseERC8183Hook is ERC165, IACPHook {
     /// @notice Thrown when the caller is not the ERC-8183 contract
     error OnlyERC8183Contract();
 
-    /// @dev Restricts access to the ERC-8183 core contract or the hook registered for the job.
-    ///      Standalone: msg.sender must be erc8183Contract (core).
-    ///      Behind router: msg.sender must be the hook registered on core for this jobId.
+    /// @dev Restricts access to the ERC-8183 core contract.
+    ///      Router support (behind a MultiHookRouter) is opt-in: override
+    ///      `_isAuthorizedRouter` to return true for approved router addresses.
+    ///      Default: false — only the ERC-8183 core may call this hook.
     modifier onlyERC8183(uint256 jobId) {
         if (msg.sender != erc8183Contract) {
+            if (!_isAuthorizedRouter(msg.sender)) revert OnlyERC8183Contract();
             AgenticCommerce.Job memory job = AgenticCommerce(erc8183Contract).getJob(jobId);
             if (msg.sender != job.hook) revert OnlyERC8183Contract();
         }
         _;
+    }
+
+    /// @dev Override to return true for router addresses that are allowed to call
+    ///      this hook on behalf of the ERC-8183 core (e.g. a MultiHookRouter).
+    ///      Defaults to false — hooks are called directly by the core.
+    function _isAuthorizedRouter(address /*router*/) internal virtual returns (bool) {
+        return false;
     }
 
     /// @param erc8183Contract_ The ERC-8183 core contract address
