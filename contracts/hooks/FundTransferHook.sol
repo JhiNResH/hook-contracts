@@ -93,6 +93,13 @@ contract FundTransferHook is BaseACPHook {
     /// @dev Store transfer commitment from setBudget optParams.
     function _preSetBudget(uint256 jobId, address, address, uint256, bytes memory optParams) internal override {
         if (optParams.length == 0) return;
+        // Once the provider has deposited the output tokens in _preSubmit, the
+        // commitment (buyer, transferAmount) governs where escrowed tokens are
+        // released. Allowing it to be overwritten — including the implicit
+        // reset of providerDeposited to false in the struct literal below —
+        // would let a later setBudget redirect the escrow to a different buyer
+        // or strand it by clearing the deposit flag while tokens remain held.
+        if (commitments[jobId].providerDeposited) revert AlreadyDeposited();
         (address buyer, uint256 transferAmount) = abi.decode(optParams, (address, uint256));
         if (buyer == address(0)) revert ZeroAddress();
         if (transferAmount == 0) revert ZeroAmount();
