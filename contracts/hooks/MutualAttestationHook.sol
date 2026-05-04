@@ -1,36 +1,46 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.20;
 
-import {BaseACPHook} from "../BaseACPHook.sol";
+import {BaseERC8183Hook} from "../BaseERC8183Hook.sol";
+import {IERC8183HookMetadata} from "../interfaces/IERC8183HookMetadata.sol";
+import {AgenticCommerce} from "@erc8183/AgenticCommerce.sol";
 import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
-import {IAttestationService} from "../interfaces/IAttestationService.sol";
 
-/// @notice Minimal interface to read job participants from AgenticCommerceHooked
-interface IAgenticCommerceReader {
-    struct Job {
-        uint256 id;
-        address client;
-        address provider;
-        address evaluator;
-        address hook;
-        string description;
-        uint256 budget;
-        uint256 expiredAt;
-        uint8 status;
+/// @title IAttestationService
+/// @notice Chain-agnostic attestation interface.
+interface IAttestationService {
+    struct AttestationRequestData {
+        address recipient;
+        uint64 expirationTime;
+        bool revocable;
+        bytes32 refUID;
+        bytes data;
+        uint256 value;
     }
-    function getJob(uint256 jobId) external view returns (Job memory);
+
+    struct AttestationRequest {
+        bytes32 schema;
+        AttestationRequestData data;
+    }
+
+    function attest(AttestationRequest calldata request) external payable returns (bytes32 uid);
 }
 
 /// @title MutualAttestationHook
 /// @notice Airbnb-style mutual reviews -- both client and provider attest each other after job completion.
 /// @dev Creates two attestations per completed job: one from each party.
-///      Compatible with EAS (Base), BAS (BSC), and SimpleAttestation (X Layer) —
+///      Compatible with EAS (Base), BAS (BSC), and SimpleAttestation (X Layer) -
 ///      inject the correct address at construction time.
 ///      Bad clients who post vague specs get low scores from providers.
 ///      Bad providers who deliver garbage get low scores from clients.
 ///      Both sides build reputation. Both sides are accountable.
 /// @custom:security-contact security@maiat.xyz
-contract MutualAttestationHook is BaseACPHook, ReentrancyGuard {
+contract MutualAttestationHook is BaseERC8183Hook, ReentrancyGuard, IERC8183HookMetadata {
+    bytes4 private constant SEL_COMPLETE =
+        bytes4(keccak256("complete(uint256,bytes32,bytes)"));
+    bytes4 private constant SEL_REJECT =
+        bytes4(keccak256("reject(uint256,bytes32,bytes)"));
+
     /// @notice Attestation service (EAS / BAS / SimpleAttestation)
     IAttestationService public immutable attestationService;
 
@@ -75,11 +85,11 @@ contract MutualAttestationHook is BaseACPHook, ReentrancyGuard {
     error MutualAttestationHook__NotJobParticipant();
 
     constructor(
-        address acpContract_,
+        address erc8183Contract_,
         address attestationService_,
         bytes32 schemaUID_,
         uint256 reviewWindow_
-    ) BaseACPHook(acpContract_) {
+    ) BaseERC8183Hook(erc8183Contract_) {
         attestationService = IAttestationService(attestationService_);
         schemaUID = schemaUID_;
         reviewWindow = reviewWindow_ == 0 ? 7 days : reviewWindow_;
@@ -88,6 +98,7 @@ contract MutualAttestationHook is BaseACPHook, ReentrancyGuard {
     /// @notice Records job completion timestamp + participants when job completes
     function _postComplete(
         uint256 jobId,
+        address, /* caller */
         bytes32, /* reason */
         bytes memory /* optParams */
     ) internal virtual override {
@@ -101,6 +112,7 @@ contract MutualAttestationHook is BaseACPHook, ReentrancyGuard {
     /// @notice Records job rejection timestamp + participants so rejected jobs can also be reviewed
     function _postReject(
         uint256 jobId,
+        address, /* caller */
         bytes32, /* reason */
         bytes memory /* optParams */
     ) internal virtual override {
@@ -196,9 +208,23 @@ contract MutualAttestationHook is BaseACPHook, ReentrancyGuard {
 
     /// @dev Reads client and provider from ACP contract's getJob()
     function _getJobParticipants(uint256 jobId) internal view returns (address client_, address provider_) {
-        IAgenticCommerceReader.Job memory job = IAgenticCommerceReader(acpContract).getJob(jobId);
+        AgenticCommerce.Job memory job = AgenticCommerce(erc8183Contract).getJob(jobId);
         client_ = job.client;
         provider_ = job.provider;
+    }
+
+    function requiredSelectors() external pure returns (bytes4[] memory selectors) {
+        selectors = new bytes4[](2);
+        selectors[0] = SEL_COMPLETE;
+        selectors[1] = SEL_REJECT;
+    }
+
+    function supportsInterface(
+        bytes4 interfaceId
+    ) public view override(BaseERC8183Hook) returns (bool) {
+        return
+            interfaceId == type(IERC8183HookMetadata).interfaceId ||
+            super.supportsInterface(interfaceId);
     }
 
     function _createAttestation(
