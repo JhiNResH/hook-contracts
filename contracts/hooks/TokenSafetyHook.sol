@@ -1,28 +1,58 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.20;
 
-import "../BaseACPHook.sol";
-import "@acp/AgenticCommerce.sol";
-import "../interfaces/ITokenSafetyOracle.sol";
+import "../BaseERC8183Hook.sol";
+import "../interfaces/IERC8183HookMetadata.sol";
+import "@erc8183/AgenticCommerce.sol";
+
+/// @title ITokenSafetyOracle
+/// @notice Minimal interface for querying ERC-20 token safety verdicts.
+interface ITokenSafetyOracle {
+    /// @dev Safe(0), Honeypot(1), HighTax(2), Unverified(3), Blocked(4)
+    enum TokenVerdict {
+        Safe,
+        Honeypot,
+        HighTax,
+        Unverified,
+        Blocked
+    }
+
+    struct TokenSafetyData {
+        TokenVerdict verdict;
+        uint256 buyTax;
+        uint256 sellTax;
+        bool verified;
+        uint256 lastUpdated;
+    }
+
+    function getTokenSafety(address token) external view returns (TokenSafetyData memory data);
+}
 
 /// @title TokenSafetyHook
 /// @notice Blocks job funding when the payment token is flagged as unsafe
-///         by an external oracle. Standalone policy hook — no router or
+///         by an external oracle. Standalone policy hook - no router or
 ///         attestation dependencies.
 ///
-/// @dev Inherits BaseACPHook; only overrides `_preFund`.
-///      Reads `paymentToken` from `getJob(jobId)` — never decodes it from
+/// @dev Inherits BaseERC8183Hook; only overrides `_preFund`.
+///      Reads `paymentToken` from `getJob(jobId)` - never decodes it from
 ///      hook callback data.
 ///
 ///      Token check flow:
-///        1. fund(jobId, ...) triggers beforeAction → _preFund
+///        1. fund(jobId, ...) triggers beforeAction -> _preFund
 ///        2. Read job.paymentToken from AgenticCommerce
-///        3. If whitelisted → pass
-///        4. Else query oracle → if verdict is blocked → revert
+///        3. If whitelisted -> pass
+///        4. Else query oracle -> if verdict is blocked -> revert
+///
+///      Use case: protect job clients and providers from unsafe ERC-20 payment
+///      tokens before funds enter the escrow lifecycle. When used with
+///      MultiHookRouter, configure this hook for the fund selector.
 ///
 /// @custom:security-contact security@erc-8183.org
-contract TokenSafetyHook is BaseACPHook {
-    // ──────────────────── Storage ────────────────────
+contract TokenSafetyHook is BaseERC8183Hook, IERC8183HookMetadata {
+    // --- Storage -------------------------------------------------------------
+
+    bytes4 private constant SEL_FUND =
+        bytes4(keccak256("fund(uint256,uint256,bytes)"));
 
     /// @notice Token safety oracle
     ITokenSafetyOracle public oracle;
@@ -36,39 +66,39 @@ contract TokenSafetyHook is BaseACPHook {
     /// @notice Contract owner for admin functions
     address public owner;
 
-    // ──────────────────── Constants ────────────────────
+    // --- Constants -----------------------------------------------------------
 
     /// @dev Default blocked: Honeypot(1) | HighTax(2) | Blocked(4) = 0b10110 = 22
     uint8 public constant DEFAULT_BLOCKED_VERDICTS = (1 << 1) | (1 << 2) | (1 << 4);
 
-    // ──────────────────── Errors ────────────────────
+    // --- Errors --------------------------------------------------------------
 
     error UnsafeToken(address token, uint8 verdict);
     error ZeroAddress();
     error OnlyOwner();
 
-    // ──────────────────── Events ────────────────────
+    // --- Events --------------------------------------------------------------
 
     event TokenChecked(uint256 indexed jobId, address indexed token, uint8 verdict, bool allowed);
     event TokenWhitelisted(address indexed token, bool status);
     event OracleUpdated(address indexed oldOracle, address indexed newOracle);
     event BlockedVerdictsUpdated(uint8 oldMask, uint8 newMask);
 
-    // ──────────────────── Modifiers ────────────────────
+    // --- Modifiers -----------------------------------------------------------
 
     modifier onlyOwner() {
         if (msg.sender != owner) revert OnlyOwner();
         _;
     }
 
-    // ──────────────────── Constructor ────────────────────
+    // --- Constructor ---------------------------------------------------------
 
     constructor(
-        address acpContract_,
+        address erc8183Contract_,
         address oracle_,
         uint8 blockedVerdicts_,
         address owner_
-    ) BaseACPHook(acpContract_) {
+    ) BaseERC8183Hook(erc8183Contract_) {
         if (oracle_ == address(0)) revert ZeroAddress();
         if (owner_ == address(0)) revert ZeroAddress();
         oracle = ITokenSafetyOracle(oracle_);
@@ -76,7 +106,7 @@ contract TokenSafetyHook is BaseACPHook {
         owner = owner_;
     }
 
-    // ──────────────────── Hook: _preFund ────────────────────
+    // --- Hook: _preFund ------------------------------------------------------
 
     /// @dev Read paymentToken from job state, check via oracle.
     function _preFund(
@@ -84,9 +114,9 @@ contract TokenSafetyHook is BaseACPHook {
         address,
         bytes memory
     ) internal override {
-        address token = AgenticCommerce(acpContract).getJob(jobId).paymentToken;
+        address token = AgenticCommerce(erc8183Contract).getJob(jobId).paymentToken;
 
-        // No token set yet (budget not configured) — skip
+        // No token set yet (budget not configured) - skip
         if (token == address(0)) return;
 
         // Whitelisted tokens bypass oracle
@@ -105,7 +135,7 @@ contract TokenSafetyHook is BaseACPHook {
         if (blocked) revert UnsafeToken(token, v);
     }
 
-    // ──────────────────── Admin ────────────────────
+    // --- Admin ---------------------------------------------------------------
 
     function setWhitelisted(address token, bool status) external onlyOwner {
         whitelisted[token] = status;
@@ -133,9 +163,24 @@ contract TokenSafetyHook is BaseACPHook {
         emit BlockedVerdictsUpdated(old, mask);
     }
 
-    // ──────────────────── Views ────────────────────
+    // --- Views ---------------------------------------------------------------
 
     function isVerdictBlocked(uint8 verdict) external view returns (bool) {
         return (blockedVerdicts & (1 << verdict)) != 0;
+    }
+
+    // --- IERC8183HookMetadata -----------------------------------------------
+
+    function requiredSelectors() external pure returns (bytes4[] memory selectors) {
+        selectors = new bytes4[](1);
+        selectors[0] = SEL_FUND;
+    }
+
+    function supportsInterface(
+        bytes4 interfaceId
+    ) public view override(BaseERC8183Hook) returns (bool) {
+        return
+            interfaceId == type(IERC8183HookMetadata).interfaceId ||
+            super.supportsInterface(interfaceId);
     }
 }
