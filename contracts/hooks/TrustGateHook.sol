@@ -2,43 +2,84 @@
 pragma solidity ^0.8.20;
 
 import "../BaseERC8183Hook.sol";
-import "../interfaces/IRNWYTrustOracle.sol";
+import "../interfaces/IERC8183HookMetadata.sol";
 import "@openzeppelin/contracts/access/Ownable.sol";
+
+/// @title IRNWYTrustOracle
+/// @notice Minimal interface for agent-identity-based trust oracles.
+/// @dev Lookup key is (agentId, chainId, registry) to support multi-chain,
+///      multi-registry agent identity resolution.
+interface IRNWYTrustOracle {
+    function getScore(
+        uint256 agentId,
+        uint256 chainId,
+        string calldata registry
+    ) external view returns (
+        uint8 score,
+        uint8 tier,
+        uint8 sybilSeverity,
+        uint40 updatedAt
+    );
+
+    function hasScore(
+        uint256 agentId,
+        uint256 chainId,
+        string calldata registry
+    ) external view returns (bool);
+
+    function meetsThreshold(
+        uint256 agentId,
+        uint256 chainId,
+        string calldata registry,
+        uint8 threshold
+    ) external view returns (bool);
+
+    function agentCount() external view returns (uint256);
+}
 
 /**
  * @title TrustGateHook
- * @notice IACPHook that gates ERC-8183 job lifecycle by on-chain trust score.
+ * @notice Hook that gates ERC-8183 job funding and submission by agent trust score.
  *
  * @dev Inherits BaseERC8183Hook for correct selector routing, data decoding,
  *      and onlyERC8183 caller authentication. Reads from any oracle implementing
- *      IRNWYTrustOracle — an agent-identity-based trust interface using
+ *      IRNWYTrustOracle - an agent-identity-based trust interface using
  *      (agentId, chainId, registry) lookups across multiple chains and registries.
  *
  *      Reference implementation: RNWY Trust Oracle on Base mainnet
  *      (138,000+ agent scores covering ERC-8004, Olas, and Virtuals).
  *
  * Hook points:
- *   - _preFund(fund)      → Check client trust, revert if below threshold
- *   - _preSubmit(submit)  → Check provider trust, revert if below threshold.
+ *   - _preFund(fund)      -> Check client trust, revert if below threshold
+ *   - _preSubmit(submit)  -> Check provider trust, revert if below threshold.
  *                           Also checks client trust when job status is Open
  *                           (zero-budget path skips fund(), so _preFund never fires).
- *   - _postComplete       → Emit outcome event
- *   - _postReject         → Emit outcome event
+ *   - _postComplete       -> Emit outcome event
+ *   - _postReject         -> Emit outcome event
  *
  * The hook maps wallet addresses to agent IDs via a registry managed by the
- * hook owner. The oracle does all scoring — the hook is a gate, not a judge.
+ * hook owner. The oracle does all scoring - the hook is a gate, not a judge.
+ *
+ * Use case: prevent low-trust clients from funding jobs and low-trust providers
+ * from submitting work, while keeping scoring outside the hook. When used with
+ * MultiHookRouter, configure this hook for both fund and submit selectors.
  */
-contract TrustGateHook is BaseERC8183Hook, Ownable {
+contract TrustGateHook is BaseERC8183Hook, Ownable, IERC8183HookMetadata {
     /*//////////////////////////////////////////////////////////////
                             STORAGE
     //////////////////////////////////////////////////////////////*/
+
+    bytes4 private constant SEL_FUND =
+        bytes4(keccak256("fund(uint256,uint256,bytes)"));
+    bytes4 private constant SEL_SUBMIT =
+        bytes4(keccak256("submit(uint256,bytes32,bytes)"));
 
     IRNWYTrustOracle public oracle;
     uint8 public threshold;
     uint256 public defaultChainId;
     string public defaultRegistry;
 
-    /// @notice Wallet address → agent ID
+    /// @notice Wallet address -> agent ID
     mapping(address => uint256) public agentIds;
 
     /// @notice Tracks which wallets have been explicitly registered.
@@ -67,10 +108,9 @@ contract TrustGateHook is BaseERC8183Hook, Ownable {
     //////////////////////////////////////////////////////////////*/
 
     /**
-     * @param erc8183Contract_ Address of the ERC-8183 core (AgenticCommerce).
-     *                         TrustGateHook does not support router calls (_isAuthorizedRouter = false).
+     * @param erc8183Contract_ Address of the ERC-8183 core or MultiHookRouter.
      * @param oracle_          Address of any IRNWYTrustOracle implementation
-     * @param threshold_       Minimum trust score (0-95) to pass the gate
+     * @param threshold_       Minimum trust score required to pass the gate
      * @param chainId_         Default chain ID for oracle lookups (e.g., 8453 for Base)
      * @param registry_        Default registry for oracle lookups (e.g., "erc8004")
      */
@@ -114,7 +154,7 @@ contract TrustGateHook is BaseERC8183Hook, Ownable {
 
         AgenticCommerce.Job memory job = AgenticCommerce(erc8183Contract).getJob(jobId);
         if (job.status == AgenticCommerce.JobStatus.Open) {
-            _checkTrust(jobId, job.client); // client — zero-budget path only
+            _checkTrust(jobId, job.client); // client - zero-budget path only
         }
     }
 
@@ -142,14 +182,14 @@ contract TrustGateHook is BaseERC8183Hook, Ownable {
                     ADMIN
     //////////////////////////////////////////////////////////////*/
 
-    /// @notice Register a wallet → agent ID mapping.
+    /// @notice Register a wallet -> agent ID mapping.
     function setAgentId(address wallet, uint256 agentId) external onlyOwner {
         agentIds[wallet] = agentId;
         registered[wallet] = true;
         emit AgentIdSet(wallet, agentId);
     }
 
-    /// @notice Batch-register wallet → agent ID mappings.
+    /// @notice Batch-register wallet -> agent ID mappings.
     function setAgentIds(address[] calldata wallets, uint256[] calldata ids) external onlyOwner {
         require(wallets.length == ids.length, "TrustGateHook: array length mismatch");
         for (uint256 i = 0; i < wallets.length; i++) {
@@ -170,6 +210,24 @@ contract TrustGateHook is BaseERC8183Hook, Ownable {
         require(oracle_ != address(0), "TrustGateHook: zero oracle");
         emit OracleUpdated(address(oracle), oracle_);
         oracle = IRNWYTrustOracle(oracle_);
+    }
+
+    /*//////////////////////////////////////////////////////////////
+                    IERC8183HookMetadata
+    //////////////////////////////////////////////////////////////*/
+
+    function requiredSelectors() external pure returns (bytes4[] memory selectors) {
+        selectors = new bytes4[](2);
+        selectors[0] = SEL_FUND;
+        selectors[1] = SEL_SUBMIT;
+    }
+
+    function supportsInterface(
+        bytes4 interfaceId
+    ) public view override(BaseERC8183Hook) returns (bool) {
+        return
+            interfaceId == type(IERC8183HookMetadata).interfaceId ||
+            super.supportsInterface(interfaceId);
     }
 
     /*//////////////////////////////////////////////////////////////
