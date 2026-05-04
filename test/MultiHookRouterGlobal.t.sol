@@ -4,13 +4,13 @@ pragma solidity ^0.8.20;
 import "forge-std/Test.sol";
 import "../contracts/hooks/MultiHookRouter.sol";
 import "../contracts/interfaces/IERC8183HookMetadata.sol";
-import "@erc8183/IACPHook.sol";
+import "@erc8183/IERC8183Hook.sol";
 import "@erc8183/AgenticCommerce.sol";
 import "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
 import "@openzeppelin/contracts/utils/introspection/ERC165.sol";
 
 /// @dev Minimal mock hook — counts calls, declares no required selectors.
-contract MockHook is ERC165, IACPHook, IERC8183HookMetadata {
+contract MockHook is ERC165, IERC8183Hook, IERC8183HookMetadata {
     uint256 public beforeCalls;
     uint256 public afterCalls;
     uint256 public lastJobId;
@@ -37,7 +37,7 @@ contract MockHook is ERC165, IACPHook, IERC8183HookMetadata {
 
     function supportsInterface(bytes4 interfaceId) public view override(ERC165, IERC165) returns (bool) {
         return
-            interfaceId == type(IACPHook).interfaceId ||
+            interfaceId == type(IERC8183Hook).interfaceId ||
             interfaceId == type(IERC8183HookMetadata).interfaceId ||
             super.supportsInterface(interfaceId);
     }
