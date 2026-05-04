@@ -3,7 +3,9 @@ pragma solidity ^0.8.20;
 
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
-import "../BaseACPHook.sol";
+import "../BaseERC8183Hook.sol";
+import "../interfaces/IERC8183HookMetadata.sol";
+import "@erc8183/AgenticCommerce.sol";
 
 /**
  * @title FundTransferHook
@@ -20,30 +22,30 @@ import "../BaseACPHook.sol";
  * The service fee for the job is handled by the core ACP escrow (job.budget).
  * The capital and output token flow is handled entirely by this hook.
  *
- * FLOW (hook callbacks marked with →)
+ * FLOW (hook callbacks marked with ->)
  * ----
  *  1. createJob(provider, evaluator, expiredAt, description, hook=this)
  *
  *  2. Client calls setBudget(jobId, serviceFee, optParams: abi.encode(buyer, transferAmount)):
- *     → _preSetBudget: decode optParams, store {buyer, transferAmount} as commitment.
- *     → core: set job.budget = serviceFee.
+ *     -> _preSetBudget: decode optParams, store {buyer, transferAmount} as commitment.
+ *     -> core: set job.budget = serviceFee.
  *
  *  3. Client approves core contract for serviceFee AND this hook for transferAmount.
  *     Client calls fund(jobId, ""):
- *     → _preFund: verify client has approved this hook for transferAmount.
- *     → core: pull serviceFee from client into escrow, set Funded.
- *     → _postFund: pull transferAmount from client, forward to provider (capital).
+ *     -> _preFund: verify client has approved this hook for transferAmount.
+ *     -> core: pull serviceFee from client into escrow, set Funded.
+ *     -> _postFund: pull transferAmount from client, forward to provider (capital).
  *
  *  4. Provider uses the capital to produce output tokens off-chain/on-chain.
  *
  *  5. Provider approves this hook for transferAmount.
  *     Provider calls submit(jobId, deliverable, ""):
- *     → _preSubmit: pull transferAmount from provider into hook (escrow).
- *     → core: set Submitted.
+ *     -> _preSubmit: pull transferAmount from provider into hook (escrow).
+ *     -> core: set Submitted.
  *
  *  6. Evaluator calls complete(jobId, reason, ""):
- *     → core: release serviceFee to provider.
- *     → _postComplete: release transferAmount from hook to buyer.
+ *     -> core: release serviceFee to provider.
+ *     -> _postComplete: release transferAmount from hook to buyer.
  *
  * RECOVERY
  * --------
@@ -53,7 +55,7 @@ import "../BaseACPHook.sol";
  * KEY PROPERTY: The provider cannot submit without depositing the output tokens,
  * and the buyer only receives tokens when the evaluator completes the job.
  */
-contract FundTransferHook is BaseACPHook {
+contract FundTransferHook is BaseERC8183Hook, IERC8183HookMetadata {
     using SafeERC20 for IERC20;
 
     struct TransferCommitment {
@@ -74,19 +76,32 @@ contract FundTransferHook is BaseACPHook {
     error AlreadyDeposited();
     error NothingToRecover();
     error JobNotExpired();
+    error TransferAmountMismatch();
 
-    constructor(address token_, address acpContract_) BaseACPHook(acpContract_) {
+    constructor(address token_, address erc8183Contract_) BaseERC8183Hook(erc8183Contract_) {
         if (token_ == address(0)) revert ZeroAddress();
         token = IERC20(token_);
     }
 
+    /// @dev Typed accessor for the core contract
+    function _core() internal view returns (AgenticCommerce) {
+        return AgenticCommerce(erc8183Contract);
+    }
+
     // -------------------------------------------------------------------------
-    // Hook callbacks (called by AgenticCommerceHooked via beforeAction/afterAction)
+    // Hook callbacks (called by AgenticCommerce via beforeAction/afterAction)
     // -------------------------------------------------------------------------
 
     /// @dev Store transfer commitment from setBudget optParams.
-    function _preSetBudget(uint256 jobId, uint256, bytes memory optParams) internal override {
+    function _preSetBudget(uint256 jobId, address, address, uint256, bytes memory optParams) internal override {
         if (optParams.length == 0) return;
+        // Once the provider has deposited the output tokens in _preSubmit, the
+        // commitment (buyer, transferAmount) governs where escrowed tokens are
+        // released. Allowing it to be overwritten — including the implicit
+        // reset of providerDeposited to false in the struct literal below —
+        // would let a later setBudget redirect the escrow to a different buyer
+        // or strand it by clearing the deposit flag while tokens remain held.
+        if (commitments[jobId].providerDeposited) revert AlreadyDeposited();
         (address buyer, uint256 transferAmount) = abi.decode(optParams, (address, uint256));
         if (buyer == address(0)) revert ZeroAddress();
         if (transferAmount == 0) revert ZeroAmount();
@@ -98,34 +113,42 @@ contract FundTransferHook is BaseACPHook {
     }
 
     /// @dev Verify client has approved this hook for the committed transferAmount.
-    function _preFund(uint256 jobId, bytes memory) internal override {
+    function _preFund(uint256 jobId, address, bytes memory) internal override {
         TransferCommitment memory c = commitments[jobId];
         if (c.buyer == address(0)) revert CommitmentNotSet();
-        address client = _getJobClient(jobId);
-        uint256 allowance = token.allowance(client, address(this));
+        AgenticCommerce.Job memory job = _core().getJob(jobId);
+        uint256 allowance = token.allowance(job.client, address(this));
         if (allowance < c.transferAmount) revert InsufficientAllowance();
     }
 
     /// @dev Pull transferAmount from client and forward to provider (capital).
-    function _postFund(uint256 jobId, bytes memory) internal override {
+    function _postFund(uint256 jobId, address, bytes memory) internal override {
         TransferCommitment memory c = commitments[jobId];
-        address client = _getJobClient(jobId);
-        (address provider,) = _getJobProviderAndStatus(jobId);
-        token.safeTransferFrom(client, provider, c.transferAmount);
+        AgenticCommerce.Job memory job = _core().getJob(jobId);
+        token.safeTransferFrom(job.client, job.provider, c.transferAmount);
     }
 
     /// @dev Pull transferAmount from provider into hook escrow (output tokens).
-    function _preSubmit(uint256 jobId, bytes32, bytes memory) internal override {
+    function _preSubmit(uint256 jobId, address, bytes32, bytes memory) internal override {
         TransferCommitment storage c = commitments[jobId];
         if (c.buyer == address(0)) revert CommitmentNotSet();
         if (c.providerDeposited) revert AlreadyDeposited();
-        (address provider,) = _getJobProviderAndStatus(jobId);
+        AgenticCommerce.Job memory job = _core().getJob(jobId);
         c.providerDeposited = true;
-        token.safeTransferFrom(provider, address(this), c.transferAmount);
+        // Verify the hook actually received the full committed amount. Fee-on-
+        // transfer or rebasing tokens leave the hook short of c.transferAmount,
+        // which later causes _postComplete (and the recovery paths) to revert
+        // or to drain pooled balance from other commitments. Reject the deposit
+        // explicitly rather than silently entering that broken state.
+        uint256 balanceBefore = token.balanceOf(address(this));
+        token.safeTransferFrom(job.provider, address(this), c.transferAmount);
+        if (token.balanceOf(address(this)) - balanceBefore != c.transferAmount) {
+            revert TransferAmountMismatch();
+        }
     }
 
     /// @dev Release escrowed tokens to buyer after evaluator completes the job.
-    function _postComplete(uint256 jobId, bytes32, bytes memory) internal override {
+    function _postComplete(uint256 jobId, address, bytes32, bytes memory) internal override {
         TransferCommitment memory c = commitments[jobId];
         if (!c.providerDeposited) revert NotDeposited();
         delete commitments[jobId];
@@ -133,15 +156,15 @@ contract FundTransferHook is BaseACPHook {
     }
 
     /// @dev Return escrowed tokens to provider on rejection.
-    function _postReject(uint256 jobId, bytes32, bytes memory) internal override {
+    function _postReject(uint256 jobId, address, bytes32, bytes memory) internal override {
         TransferCommitment memory c = commitments[jobId];
         if (!c.providerDeposited) {
             delete commitments[jobId];
             return;
         }
-        (address provider,) = _getJobProviderAndStatus(jobId);
+        AgenticCommerce.Job memory job = _core().getJob(jobId);
         delete commitments[jobId];
-        token.safeTransfer(provider, c.transferAmount);
+        token.safeTransfer(job.provider, c.transferAmount);
     }
 
     // -------------------------------------------------------------------------
@@ -153,11 +176,10 @@ contract FundTransferHook is BaseACPHook {
     function recoverTokens(uint256 jobId) external {
         TransferCommitment memory c = commitments[jobId];
         if (!c.providerDeposited) revert NothingToRecover();
-        (address provider, uint8 status) = _getJobProviderAndStatus(jobId);
-        // Status 5 = Expired (set by claimRefund)
-        if (status != 5) revert JobNotExpired();
+        AgenticCommerce.Job memory job = _core().getJob(jobId);
+        if (job.status != AgenticCommerce.JobStatus.Expired) revert JobNotExpired();
         delete commitments[jobId];
-        token.safeTransfer(provider, c.transferAmount);
+        token.safeTransfer(job.provider, c.transferAmount);
     }
 
     // -------------------------------------------------------------------------
@@ -170,17 +192,18 @@ contract FundTransferHook is BaseACPHook {
     }
 
     // -------------------------------------------------------------------------
-    // Internal helpers
+    // IERC8183HookMetadata
     // -------------------------------------------------------------------------
 
-    function _getJobProviderAndStatus(uint256 jobId) internal view returns (address provider, uint8 status) {
-        (bool ok, bytes memory data) = acpContract.staticcall(
-            abi.encodeWithSignature("getJob(uint256)", jobId)
-        );
-        require(ok, "getJob failed");
-        // Job struct: (id, client, provider, evaluator, hook, description, budget, expiredAt, status)
-        (,, provider,,,,,, status) = abi.decode(
-            data, (uint256, address, address, address, address, string, uint256, uint256, uint8)
-        );
+    function requiredSelectors() external pure returns (bytes4[] memory) {
+        return new bytes4[](0);
+    }
+
+    function supportsInterface(
+        bytes4 interfaceId
+    ) public view override returns (bool) {
+        return
+            interfaceId == type(IERC8183HookMetadata).interfaceId ||
+            super.supportsInterface(interfaceId);
     }
 }
